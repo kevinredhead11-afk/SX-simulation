@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Build SX_Steady_State_Model.xlsx
-Alind formulation  —  D2EHPA / HCl  —  TDMA steady-state solver
+SX_Steady_State_Model.xlsx  —  SINGLE SHEET VERSION
+All inputs, solver, results, and charts on one sheet.
 """
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -10,37 +10,42 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.utils import get_column_letter as gcl
 
 # ── Layout constants ──────────────────────────────────────────────────────────
-N      = 25          # total stages (fixed: 10 ext + 10 scr + 5 str)
-R0     = 5           # first data row in SOLVER sheet
-R1     = R0 + N - 1  # last data row  = 29
+N   = 25          # fixed total stages
+R0  = 20          # first SOLVER data row (stage 1)
+R1  = R0 + N - 1  # last SOLVER data row  (stage 25 = row 44)
 
-# ── INPUTS sheet cell refs (absolute) ────────────────────────────────────────
-I = "INPUTS!"
+# SOLVER column map (1-indexed, same as before)
+ELEMS  = ["Pr", "Nd", "Tb", "Dy"]
+ESTART = {"Pr": 3, "Nd": 11, "Tb": 19, "Dy": 27}  # D col of each element block
+XCOL   = {"Pr": 35, "Nd": 36, "Tb": 37, "Dy": 38}  # x_i aqueous cols
+
+# Stage profile table (for charts) starts at:
+PROF_HDR = R1 + 3          # = 47  header row
+PROF_R0  = PROF_HDR + 1    # = 48  first data row
+PROF_R1  = PROF_R0 + N - 1 # = 72  last data row
+
+# ── INPUTS cell refs (all in same sheet, no sheet prefix) ─────────────────────
+# General inputs: col B, rows 5-14
+# Dist coefficients: col H (P) and I (Q), rows 5-8
+# Feed concentrations: col M, rows 5-8
 REF = {
-    "n_ext":   f"{I}$B$5",  "n_scr":   f"{I}$B$6",  "n_str":   f"{I}$B$7",
-    "He":      f"{I}$B$8",  "Hs":      f"{I}$B$9",  "Ht":      f"{I}$B$10",
-    "F":       f"{I}$B$11", "S":       f"{I}$B$12",
-    "O":       f"{I}$B$13", "R":       f"{I}$B$14",
-    # P, Q, Feed  (rows 18-21 for Pr/Nd/Tb/Dy; col C=P, D=Q; col C for Feed rows 25-28)
-    "P_Pr":  f"{I}$C$18", "Q_Pr":  f"{I}$D$18", "XF_Pr": f"{I}$C$25",
-    "P_Nd":  f"{I}$C$19", "Q_Nd":  f"{I}$D$19", "XF_Nd": f"{I}$C$26",
-    "P_Tb":  f"{I}$C$20", "Q_Tb":  f"{I}$D$20", "XF_Tb": f"{I}$C$27",
-    "P_Dy":  f"{I}$C$21", "Q_Dy":  f"{I}$D$21", "XF_Dy": f"{I}$C$28",
+    "n_ext": "$B$5",  "n_scr": "$B$6",  "n_str": "$B$7",
+    "He":    "$B$8",  "Hs":    "$B$9",  "Ht":    "$B$10",
+    "F":     "$B$11", "S":     "$B$12",
+    "O":     "$B$13", "R":     "$B$14",
+    "P_Pr":  "$H$5",  "Q_Pr":  "$I$5",  "XF_Pr": "$M$5",
+    "P_Nd":  "$H$6",  "Q_Nd":  "$I$6",  "XF_Nd": "$M$6",
+    "P_Tb":  "$H$7",  "Q_Tb":  "$I$7",  "XF_Tb": "$M$7",
+    "P_Dy":  "$H$8",  "Q_Dy":  "$I$8",  "XF_Dy": "$M$8",
 }
 
-ELEMS = ["Pr", "Nd", "Tb", "Dy"]
-
-# Col start (1-indexed) for each element's 8-column block in SOLVER
-#   offsets: 0=D, 1=a, 2=b, 3=c, 4=d, 5=c', 6=d', 7=y_org
-ESTART = {"Pr": 3, "Nd": 11, "Tb": 19, "Dy": 27}
-
-# Aqueous x_i (=y/D) columns  (35=AI, 36=AJ, 37=AK, 38=AL)
-XCOL = {"Pr": 35, "Nd": 36, "Tb": 37, "Dy": 38}
-
-# ── Colour palette ────────────────────────────────────────────────────────────
+# ── Colours ───────────────────────────────────────────────────────────────────
 NAVY  = "1F4E79"; BLUE  = "2E75B6"; LBLUE = "BDD7EE"; XBLUE = "EBF3FA"
-ORNG  = "ED7D31"; GRN   = "70AD47"; RED   = "C00000"; YLW   = "FFF2CC"
-LGRN  = "E2EFDA"; LRED  = "FCE4D6"; WHT   = "FFFFFF"; GRY   = "D9D9D9"
+ORNG  = "ED7D31"; GRN   = "70AD47"; RED   = "C00000"
+YLW   = "FFF2CC"; LGRN  = "E2EFDA"; LRED  = "FCE4D6"
+WHT   = "FFFFFF"; GRY   = "D9D9D9"; DGRY  = "555555"
+
+ELEM_CLR = {"Pr": "4472C4", "Nd": "2E75B6", "Tb": "70AD47", "Dy": "ED7D31"}
 
 # ── Style helpers ─────────────────────────────────────────────────────────────
 def fill(c): return PatternFill("solid", fgColor=c)
@@ -48,117 +53,127 @@ def fnt(bold=False, col="000000", sz=11):
     return Font(bold=bold, color=col, size=sz, name="Calibri")
 def aln(h="center", v="center", wrap=False):
     return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
-_t = Side(style="thin", color="AAAAAA")
+_t = Side(style="thin",   color="BBBBBB")
 _m = Side(style="medium", color="1F4E79")
-def brd(): return Border(left=_t, right=_t, top=_t, bottom=_t)
-def brd_med(): return Border(left=_m, right=_m, top=_m, bottom=_m)
+def brd():  return Border(left=_t, right=_t, top=_t, bottom=_t)
+def brdm(): return Border(left=_m, right=_m, top=_m, bottom=_m)
 
-def set_cell(ws, row, col, value=None, formula=None, bold=False, col_font=WHT,
-             sz=11, bg=None, h="center", wrap=False, num_fmt=None, border=True):
+def sc(ws, row, col, val=None, frm=None, bold=False, fc=WHT, sz=11,
+       bg=None, h="center", wrap=False, nf=None, bdr=True):
     c = ws.cell(row=row, column=col)
-    c.value = formula if formula else value
-    c.font = fnt(bold=bold, col=col_font, sz=sz)
-    if bg:
-        c.fill = fill(bg)
+    c.value = frm if frm is not None else val
+    c.font = fnt(bold=bold, col=fc, sz=sz)
+    if bg: c.fill = fill(bg)
     c.alignment = aln(h=h, wrap=wrap)
-    if border:
-        c.border = brd()
-    if num_fmt:
-        c.number_format = num_fmt
+    if bdr: c.border = brd()
+    if nf:  c.number_format = nf
     return c
 
-# ── Formula builders ──────────────────────────────────────────────────────────
+def hdr(ws, row, col1, col2, text, bg=NAVY, sz=11):
+    ws.merge_cells(f"{gcl(col1)}{row}:{gcl(col2)}{row}")
+    c = ws.cell(row=row, column=col1)
+    c.value = text
+    c.font = fnt(bold=True, col=WHT, sz=sz)
+    c.fill = fill(bg)
+    c.alignment = aln(h="left")
+    ws.row_dimensions[row].height = 20
+
+# ── TDMA formula builders ─────────────────────────────────────────────────────
 def f_D(row, elem):
     P, Q = REF[f"P_{elem}"], REF[f"Q_{elem}"]
     ne, ns = REF["n_ext"], REF["n_scr"]
     He, Hs, Ht = REF["He"], REF["Hs"], REF["Ht"]
     return (f"=IF(A{row}<={ne},{P}*{He}^{Q},"
-            f"IF(A{row}<={ne}+{ns},{P}*{Hs}^{Q},"
-            f"{P}*{Ht}^{Q}))")
+            f"IF(A{row}<={ne}+{ns},{P}*{Hs}^{Q},{P}*{Ht}^{Q}))")
 
 def f_a(row):
     return f"=IF(A{row}=1,0,{REF['O']})"
 
 def f_b(row, Dc):
-    O, S, R, F = REF["O"], REF["S"], REF["R"], REF["F"]
-    ne, ns, D = REF["n_ext"], REF["n_scr"], f"{Dc}{row}"
-    return (f"=IF(A{row}>{ne}+{ns},"
-            f"-{O}-{S}/{D},"
-            f"IF(A{row}>{ne},"
-            f"-{O}-{S}*{R}/{D},"
-            f"-{O}-({S}*{R}+{F})/{D}))")
+    O,S,R,F = REF["O"],REF["S"],REF["R"],REF["F"]
+    ne,ns,D = REF["n_ext"],REF["n_scr"],f"{Dc}{row}"
+    return (f"=IF(A{row}>{ne}+{ns},-{O}-{S}/{D},"
+            f"IF(A{row}>{ne},-{O}-{S}*{R}/{D},-{O}-({S}*{R}+{F})/{D}))")
 
 def f_c(row, Dc):
-    S, R, F = REF["S"], REF["R"], REF["F"]
-    ne, ns = REF["n_ext"], REF["n_scr"]
-    if row == R1:
-        return "=0"
+    S,R,F = REF["S"],REF["R"],REF["F"]
+    ne,ns = REF["n_ext"],REF["n_scr"]
+    if row == R1: return "=0"
     Dn = f"{Dc}{row+1}"
-    return (f"=IF(A{row}>{ne}+{ns},"
-            f"{S}/{Dn},"
-            f"IF(A{row}>={ne},"          # >= n_ext: feed cell + all scrub use SR
-            f"{S}*{R}/{Dn},"
-            f"({S}*{R}+{F})/{Dn}))")
+    return (f"=IF(A{row}>{ne}+{ns},{S}/{Dn},"
+            f"IF(A{row}>={ne},{S}*{R}/{Dn},({S}*{R}+{F})/{Dn}))")
 
 def f_d(row, elem):
-    XF, F, ne = REF[f"XF_{elem}"], REF["F"], REF["n_ext"]
+    XF,F,ne = REF[f"XF_{elem}"],REF["F"],REF["n_ext"]
     return f"=IF(A{row}={ne},-{XF}*{F},0)"
 
 def f_cp(row, bc, cc, ac, cpc):
-    if row == R0:
-        return f"={cc}{row}/{bc}{row}"
+    if row == R0: return f"={cc}{row}/{bc}{row}"
     w = f"({bc}{row}-{ac}{row}*{cpc}{row-1})"
     return f"={cc}{row}/{w}"
 
 def f_dp(row, bc, dc, ac, cpc, dpc):
-    if row == R0:
-        return f"={dc}{row}/{bc}{row}"
+    if row == R0: return f"={dc}{row}/{bc}{row}"
     w = f"({bc}{row}-{ac}{row}*{cpc}{row-1})"
     return f"=({dc}{row}-{ac}{row}*{dpc}{row-1})/{w}"
 
 def f_y(row, dpc, cpc, yc):
-    if row == R1:
-        return f"={dpc}{row}"
+    if row == R1: return f"={dpc}{row}"
     return f"={dpc}{row}-{cpc}{row}*{yc}{row+1}"
 
 # ═════════════════════════════════════════════════════════════════════════════
-# BUILD WORKBOOK
-# ═════════════════════════════════════════════════════════════════════════════
 wb = openpyxl.Workbook()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SHEET 1: INPUTS
-# ─────────────────────────────────────────────────────────────────────────────
 ws = wb.active
-ws.title = "INPUTS"
-ws.column_dimensions["A"].width = 34
-ws.column_dimensions["B"].width = 14
-ws.column_dimensions["C"].width = 14
-ws.column_dimensions["D"].width = 14
-ws.column_dimensions["E"].width = 20
+ws.title = "SX Model"
+ws.sheet_view.showGridLines = True
 
-# Title
-ws.merge_cells("A1:E1")
+# ── Column widths ─────────────────────────────────────────────────────────────
+ws.column_dimensions["A"].width = 30   # parameter labels / stage#
+ws.column_dimensions["B"].width = 12   # values
+ws.column_dimensions["C"].width = 2    # spacer
+ws.column_dimensions["D"].width = 2    # spacer
+ws.column_dimensions["E"].width = 2    # spacer
+ws.column_dimensions["F"].width = 10   # elem label
+ws.column_dimensions["G"].width = 2    # spacer
+ws.column_dimensions["H"].width = 12   # P
+ws.column_dimensions["I"].width = 12   # Q
+ws.column_dimensions["J"].width = 2    # spacer
+ws.column_dimensions["K"].width = 10   # elem label (feed)
+ws.column_dimensions["L"].width = 2    # spacer
+ws.column_dimensions["M"].width = 14   # feed conc
+ws.column_dimensions["N"].width = 2    # spacer
+ws.column_dimensions["O"].width = 36   # results label
+ws.column_dimensions["P"].width = 14   # results value
+
+for e in ELEMS:
+    s = ESTART[e]
+    for off in range(8):
+        ws.column_dimensions[gcl(s+off)].width = 11
+for xc in XCOL.values():
+    ws.column_dimensions[gcl(xc)].width = 11
+ws.column_dimensions[gcl(39)].width = 12
+ws.column_dimensions[gcl(40)].width = 12
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ROW 1 — MAIN TITLE
+# ═════════════════════════════════════════════════════════════════════════════
+ws.merge_cells(f"A1:{gcl(40)}1")
 c = ws["A1"]
-c.value = "SX STEADY-STATE MODEL  —  Alind Formulation  (D2EHPA / HCl)"
+c.value = "SX STEADY-STATE MODEL  —  Alind Formulation  (D2EHPA / HCl)  —  TDMA Solver"
 c.font = fnt(bold=True, col=WHT, sz=14)
 c.fill = fill(NAVY)
 c.alignment = aln()
-ws.row_dimensions[1].height = 32
-
+ws.row_dimensions[1].height = 34
 ws.row_dimensions[2].height = 8
 
-# ── Section: GENERAL INPUTS ──────────────────────────────────────────────────
-ws.merge_cells("A3:E3")
-c = ws["A3"]
-c.value = "  GENERAL INPUTS"
-c.font = fnt(bold=True, col=WHT, sz=11)
-c.fill = fill(NAVY)
-c.alignment = aln(h="left")
-ws.row_dimensions[3].height = 20
+# ═════════════════════════════════════════════════════════════════════════════
+# ROWS 3-14 — INPUTS SECTION (three panels side by side)
+# ═════════════════════════════════════════════════════════════════════════════
 
-for col, lbl in [(1,"Parameter"),(2,"Value")]:
-    set_cell(ws, 4, col, value=lbl, bold=True, col_font=WHT, bg=BLUE, h="center")
+# ── Panel 1: General Inputs (cols A-B, rows 3-14) ────────────────────────────
+hdr(ws, 3, 1, 2, "  GENERAL INPUTS")
+sc(ws, 4, 1, val="Parameter",        bold=True, fc=WHT, bg=BLUE, h="left")
+sc(ws, 4, 2, val="Value",            bold=True, fc=WHT, bg=BLUE)
 
 gen = [
     ("Extraction Stages  (n_ext)",                  10),
@@ -167,587 +182,335 @@ gen = [
     ("HCl Normality — Extraction  [N]",           0.50),
     ("HCl Normality — Scrub  [N]",                1.37),
     ("HCl Normality — Strip  [N]",                 5.0),
-    ("Feed Flowrate  (F)  [L/h or gal/min]",        25),
+    ("Feed Flowrate  (F)",                           25),
     ("Strip Flowrate  (S)",                          12),
     ("Organic Flow  (O)",                          32.5),
-    ("Reflux  (R)  — decimal  [e.g. 0.70 = 70%]", 0.70),
+    ("Reflux  (R)  [decimal: 0.70 = 70%]",        0.70),
 ]
-# Rows 5-14
 for i, (lbl, val) in enumerate(gen, start=5):
     bg = XBLUE if i % 2 == 0 else WHT
-    set_cell(ws, i, 1, value=lbl, col_font="000000", bg=bg, h="left")
-    c = set_cell(ws, i, 2, value=val, col_font="000000", bg=bg)
-    c.number_format = "0.00"
+    sc(ws, i, 1, val=lbl, fc="000000", bg=bg, h="left")
+    sc(ws, i, 2, val=val, fc="000000", bg=bg, nf="0.00")
+# rows 5-14: B5=n_ext … B14=R
 
+# ── Panel 2: Distribution Coefficients (cols F-I, rows 3-9) ─────────────────
+hdr(ws, 3, 6, 9, "  DIST. COEFFICIENTS    D = P × [HCl]^Q")
+for col, lbl in [(6,"Element"),(8,"P"),(9,"Q")]:
+    sc(ws, 4, col, val=lbl, bold=True, fc=WHT, bg=BLUE)
+dist = [("Pr",0.0008,-1.973),("Nd",0.0031,-2.541),("Tb",0.378,-2.624),("Dy",0.5959,-2.431)]
+for i,(elem,P,Q) in enumerate(dist, start=5):
+    bg = XBLUE if i%2==0 else WHT
+    sc(ws,i,6,val=elem, fc="000000",bg=bg)
+    sc(ws,i,8,val=P,    fc="000000",bg=bg,nf="0.0000")
+    sc(ws,i,9,val=Q,    fc="000000",bg=bg,nf="0.000")
+# H5=P_Pr,I5=Q_Pr … H8=P_Dy,I8=Q_Dy
+
+# ── Panel 3: Feed Concentrations (cols K-M, rows 3-9) ────────────────────────
+hdr(ws, 3, 11, 13, "  FEED CONCENTRATIONS")
+for col,lbl in [(11,"Element"),(13,"Feed Conc. (g/L)")]:
+    sc(ws,4,col,val=lbl,bold=True,fc=WHT,bg=BLUE)
+feed = [("Pr",0.0),("Nd",20.8),("Tb",0.0),("Dy",2.68)]
+for i,(elem,val) in enumerate(feed,start=5):
+    bg = XBLUE if i%2==0 else WHT
+    sc(ws,i,11,val=elem, fc="000000",bg=bg)
+    sc(ws,i,13,val=val,  fc="000000",bg=bg,nf="0.00")
+# M5=Feed_Pr, M6=Feed_Nd, M7=Feed_Tb, M8=Feed_Dy
+
+# ── Panel 4: Key Results Summary (cols O-P, rows 3-14) ───────────────────────
+hdr(ws, 3, 15, 16, "  RESULTS SUMMARY  (auto-updated)")
+sc(ws,4,15,val="Metric",       bold=True,fc=WHT,bg=BLUE,h="left")
+sc(ws,4,16,val="Value",        bold=True,fc=WHT,bg=BLUE)
+
+# These reference SOLVER data using INDEX — fully dynamic
+ne, ns = REF["n_ext"], REF["n_scr"]
+# Stage n is at SOLVER row R0 + n - 1  =  19 + n
+# loaded organic: stage n_ext → row 19+n_ext
+lo_row  = f"19+{ne}"
+# preg: first strip stage = n_ext+n_scr+1 → row 19+n_ext+n_scr+1 = 20+n_ext+n_scr
+preg_idx = f"20+{ne}+{ns}"
+raff_row = R0   # stage 1 → fixed row
+
+xcl = {e: gcl(XCOL[e]) for e in ELEMS}
+
+def idx(col_ltr, row_expr): return f"INDEX(${col_ltr}:${col_ltr},{row_expr})"
+def raff(e):  return f"${xcl[e]}${raff_row}"
+def preg(e):  return idx(xcl[e], preg_idx)
+def xtot(cells): return "+".join(cells)
+
+sum_feed = "+".join(REF[f"XF_{e}"] for e in ELEMS)
+sum_raff = xtot([raff(e) for e in ELEMS])
+sum_preg = xtot([preg(e) for e in ELEMS])
+
+results_rows = [
+    ("Loaded Organic @ Ext Exit (g/L)",
+     f"=INDEX($AM:$AM,{lo_row})", "0.00", YLW),
+    ("Raffinate — Nd (g/L)",
+     f"={raff('Nd')}", "0.00", XBLUE),
+    ("Raffinate — Dy (g/L)",
+     f"={raff('Dy')}", "0.00", XBLUE),
+    ("Preg — Nd (g/L)",
+     f"={preg('Nd')}", "0.00", LGRN),
+    ("Preg — Dy (g/L)",
+     f"={preg('Dy')}", "0.00", LGRN),
+    ("% Feed  —  Nd",
+     f"=IF(({sum_feed})=0,0,{REF['XF_Nd']}/({sum_feed})*100)", "0.00", WHT),
+    ("% Feed  —  Dy",
+     f"=IF(({sum_feed})=0,0,{REF['XF_Dy']}/({sum_feed})*100)", "0.00", WHT),
+    ("% Purity in Raffinate  —  Nd",
+     f"=IF(({sum_raff})=0,0,{raff('Nd')}/({sum_raff})*100)", "0.00", WHT),
+    ("% Purity in Preg  —  Dy",
+     f"=IF(({sum_preg})=0,0,{preg('Dy')}/({sum_preg})*100)", "0.00", WHT),
+    ("Scrub Flowrate  =  S × R",
+     f"={REF['S']}*{REF['R']}", "0.00", GRY),
+    ("Preg Flowrate   =  S × (1−R)",
+     f"={REF['S']}*(1-{REF['R']})", "0.00", GRY),
+]
+for i,(lbl,frm,nf,bg) in enumerate(results_rows, start=5):
+    sc(ws,i,15,val=lbl, fc="000000",bg=bg,h="left")
+    sc(ws,i,16,frm=frm, fc="000000",bg=bg,nf=nf)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ROWS 16-19 — SOLVER SECTION HEADERS
+# ═════════════════════════════════════════════════════════════════════════════
 ws.row_dimensions[15].height = 8
 
-# ── Section: DISTRIBUTION COEFFICIENTS ──────────────────────────────────────
-ws.merge_cells("A16:E16")
+ws.merge_cells(f"A16:{gcl(40)}16")
 c = ws["A16"]
-c.value = "  DISTRIBUTION COEFFICIENTS    D = P × [HCl]ᴺ^Q"
+c.value = ("SOLVER  —  TDMA (Thomas Algorithm)  |  Each 8-column block = one REE element"
+           "  |  Forward sweep (c′,d′) top→bottom  |  Back-sub (y_org) bottom→top")
 c.font = fnt(bold=True, col=WHT, sz=11)
 c.fill = fill(NAVY)
 c.alignment = aln(h="left")
-ws.row_dimensions[16].height = 20
+ws.row_dimensions[16].height = 22
 
-for col, lbl in [(1,"Element"),(3,"P"),(4,"Q")]:
-    set_cell(ws, 17, col, value=lbl, bold=True, col_font=WHT, bg=BLUE)
-
-dist = [
-    ("Pr", 0.0008,  -1.973),
-    ("Nd", 0.0031,  -2.541),
-    ("Tb", 0.378,   -2.624),
-    ("Dy", 0.5959,  -2.431),
-]
-# Rows 18-21
-for i, (elem, P, Q) in enumerate(dist, start=18):
-    bg = XBLUE if i % 2 == 0 else WHT
-    set_cell(ws, i, 1, value=elem, col_font="000000", bg=bg)
-    c = set_cell(ws, i, 3, value=P, col_font="000000", bg=bg)
-    c.number_format = "0.0000"
-    c = set_cell(ws, i, 4, value=Q, col_font="000000", bg=bg)
-    c.number_format = "0.000"
-
-ws.row_dimensions[22].height = 8
-
-# ── Section: FEED CONCENTRATIONS ─────────────────────────────────────────────
-ws.merge_cells("A23:E23")
-c = ws["A23"]
-c.value = "  FEED CONCENTRATIONS"
-c.font = fnt(bold=True, col=WHT, sz=11)
-c.fill = fill(NAVY)
-c.alignment = aln(h="left")
-ws.row_dimensions[23].height = 20
-
-for col, lbl in [(1,"Element"),(3,"Feed Conc. (g/L)")]:
-    set_cell(ws, 24, col, value=lbl, bold=True, col_font=WHT, bg=BLUE)
-
-feed = [("Pr", 0.0), ("Nd", 20.8), ("Tb", 0.0), ("Dy", 2.68)]
-# Rows 25-28
-for i, (elem, val) in enumerate(feed, start=25):
-    bg = XBLUE if i % 2 == 0 else WHT
-    set_cell(ws, i, 1, value=elem, col_font="000000", bg=bg)
-    c = set_cell(ws, i, 3, value=val, col_font="000000", bg=bg)
-    c.number_format = "0.00"
-
-ws.row_dimensions[29].height = 8
-
-# ── Section: COMPUTED REFERENCE VALUES ───────────────────────────────────────
-ws.merge_cells("A30:E30")
-c = ws["A30"]
-c.value = "  COMPUTED REFERENCE VALUES  (auto-calculated)"
-c.font = fnt(bold=True, col=WHT, sz=11)
-c.fill = fill(BLUE)
-c.alignment = aln(h="left")
-ws.row_dimensions[30].height = 20
-
-for col, lbl in [(1,"Description"),(2,"Value")]:
-    set_cell(ws, 31, col, value=lbl, bold=True, col_font=WHT, bg=BLUE)
-
-computed = [
-    ("Scrub Flowrate  =  S × R",        f"={REF['S']}*{REF['R']}"),
-    ("Preg Flowrate   =  S × (1 − R)",  f"={REF['S']}*(1-{REF['R']})"),
-    ("Raffinate Flowrate  =  S×R + F",  f"={REF['S']}*{REF['R']}+{REF['F']}"),
-    ("Total Stages  =  n_ext+n_scr+n_str", f"={REF['n_ext']}+{REF['n_scr']}+{REF['n_str']}"),
-]
-for i, (lbl, frm) in enumerate(computed, start=32):
-    bg = XBLUE if i % 2 == 0 else WHT
-    set_cell(ws, i, 1, value=lbl, col_font="000000", bg=bg, h="left")
-    c = set_cell(ws, i, 2, formula=frm, col_font="000000", bg=bg)
-    c.number_format = "0.00"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SHEET 2: SOLVER
-# ─────────────────────────────────────────────────────────────────────────────
-ws2 = wb.create_sheet("SOLVER")
-
-# Freeze top 4 rows + col A
-ws2.freeze_panes = "B5"
-
-# Column widths
-ws2.column_dimensions["A"].width = 7   # Stage#
-ws2.column_dimensions["B"].width = 10  # Section
+# Row 17: element group banners
+ws.merge_cells("A17:B17")
+ws["A17"].fill = fill(NAVY)
 for e in ELEMS:
     s = ESTART[e]
-    for off in range(8):
-        ws2.column_dimensions[gcl(s+off)].width = 11
-for xc in XCOL.values():
-    ws2.column_dimensions[gcl(xc)].width = 11
-ws2.column_dimensions[gcl(39)].width = 12  # total org
-ws2.column_dimensions[gcl(40)].width = 12  # total aq
-
-# ── Title row 1 ───────────────────────────────────────────────────────────────
-ws2.merge_cells(f"A1:{gcl(40)}1")
-c = ws2["A1"]
-c.value = "SOLVER  —  TDMA (Thomas Algorithm)  |  Each column-block is one REE element"
-c.font = fnt(bold=True, col=WHT, sz=13)
-c.fill = fill(NAVY)
-c.alignment = aln()
-ws2.row_dimensions[1].height = 28
-
-# ── Row 2: element group headers ─────────────────────────────────────────────
-elem_colors = {"Pr": "4472C4", "Nd": "2E75B6", "Tb": "70AD47", "Dy": ORNG}
-ws2.merge_cells("A2:B2")
-ws2["A2"].value = ""
-ws2["A2"].fill = fill(NAVY)
-
-for elem in ELEMS:
-    s = ESTART[elem]
-    ws2.merge_cells(f"{gcl(s)}2:{gcl(s+7)}2")
-    c = ws2[f"{gcl(s)}2"]
-    c.value = f"← {elem}  (8 columns) →"
-    c.font = fnt(bold=True, col=WHT, sz=11)
-    c.fill = fill(elem_colors[elem])
+    ws.merge_cells(f"{gcl(s)}17:{gcl(s+7)}17")
+    c = ws[f"{gcl(s)}17"]
+    c.value = f"← {e}  (8 cols) →"
+    c.font = fnt(bold=True, col=WHT, sz=10)
+    c.fill = fill(ELEM_CLR[e])
     c.alignment = aln()
-ws2.row_dimensions[2].height = 20
+ws.merge_cells(f"{gcl(35)}17:{gcl(38)}17")
+c = ws[f"{gcl(35)}17"]; c.value="← Aqueous x_i →"; c.font=fnt(bold=True,col=WHT,sz=10); c.fill=fill(NAVY); c.alignment=aln()
+ws.merge_cells(f"{gcl(39)}17:{gcl(40)}17")
+c = ws[f"{gcl(39)}17"]; c.value="Totals"; c.font=fnt(bold=True,col=WHT,sz=10); c.fill=fill(NAVY); c.alignment=aln()
+ws.row_dimensions[17].height = 18
 
-# Aqueous header
-ws2.merge_cells(f"{gcl(35)}2:{gcl(38)}2")
-c = ws2[f"{gcl(35)}2"]
-c.value = "← Aqueous  x_i  (g/L) →"
-c.font = fnt(bold=True, col=WHT, sz=11)
-c.fill = fill(NAVY)
-c.alignment = aln()
+# Row 18: sub-labels
+sublbls = {0:"D_i",1:"a",2:"b",3:"c",4:"d (RHS)",5:"c′",6:"d′",7:"y_org"}
+for e in ELEMS:
+    s = ESTART[e]
+    for off,lbl in sublbls.items():
+        c = ws.cell(row=18, column=s+off)
+        c.value=lbl; c.font=fnt(bold=True,col=WHT,sz=8); c.fill=fill(DGRY); c.alignment=aln()
+for off,lbl in enumerate(["x_Pr","x_Nd","x_Tb","x_Dy"]):
+    c=ws.cell(row=18,column=35+off); c.value=lbl; c.font=fnt(bold=True,col=WHT,sz=8); c.fill=fill(DGRY); c.alignment=aln()
+for col,lbl in [(39,"Σ y_org"),(40,"Σ x_aq")]:
+    c=ws.cell(row=18,column=col); c.value=lbl; c.font=fnt(bold=True,col=WHT,sz=8); c.fill=fill(DGRY); c.alignment=aln()
+ws.row_dimensions[18].height = 14
 
-ws2.merge_cells(f"{gcl(39)}2:{gcl(40)}2")
-c = ws2[f"{gcl(39)}2"]
-c.value = "Totals"
-c.font = fnt(bold=True, col=WHT, sz=11)
-c.fill = fill(NAVY)
-c.alignment = aln()
+# Row 19: full column header descriptions
+sc(ws,19,1,val="Stage",   bold=True,fc=WHT,bg=NAVY,sz=9)
+sc(ws,19,2,val="Section", bold=True,fc=WHT,bg=NAVY,sz=9)
+col19 = {0:"D=P·[HCl]^Q",1:"a (sub-diag)",2:"b (main diag)",
+         3:"c (super-diag)",4:"d (RHS)",5:"c′ fwd sweep",6:"d′ fwd sweep",7:"y org (g/L)"}
+for e in ELEMS:
+    s = ESTART[e]
+    for off,lbl in col19.items():
+        c=ws.cell(row=19,column=s+off); c.value=lbl
+        c.font=fnt(bold=True,col=WHT,sz=8); c.fill=fill(ELEM_CLR[e]); c.alignment=aln(wrap=True)
+for off,lbl in enumerate(["x_Pr=y/D","x_Nd=y/D","x_Tb=y/D","x_Dy=y/D"]):
+    c=ws.cell(row=19,column=35+off); c.value=lbl; c.font=fnt(bold=True,col=WHT,sz=8); c.fill=fill(NAVY); c.alignment=aln(wrap=True)
+for col,lbl in [(39,"Total Org (g/L)"),(40,"Total Aq (g/L)")]:
+    c=ws.cell(row=19,column=col); c.value=lbl; c.font=fnt(bold=True,col=WHT,sz=8); c.fill=fill(NAVY); c.alignment=aln(wrap=True)
+ws.row_dimensions[19].height = 28
 
-# ── Row 3: sub-headers (formula meaning) ─────────────────────────────────────
-sub_labels = {0:"D_i", 1:"a", 2:"b", 3:"c", 4:"d(RHS)", 5:"c′", 6:"d′", 7:"y_org"}
-for elem in ELEMS:
-    s = ESTART[elem]
-    for off, lbl in sub_labels.items():
-        c = ws2.cell(row=3, column=s+off)
-        c.value = lbl
-        c.font = fnt(bold=True, col=WHT, sz=9)
-        c.fill = fill("555555")
-        c.alignment = aln()
-ws2.row_dimensions[3].height = 16
-
-for off, lbl in enumerate(["x_Pr","x_Nd","x_Tb","x_Dy"]):
-    c = ws2.cell(row=3, column=35+off)
-    c.value = lbl
-    c.font = fnt(bold=True, col=WHT, sz=9)
-    c.fill = fill("555555")
-    c.alignment = aln()
-
-for col, lbl in [(39,"Σ y_org"),(40,"Σ x_aq")]:
-    c = ws2.cell(row=3, column=col)
-    c.value = lbl
-    c.font = fnt(bold=True, col=WHT, sz=9)
-    c.fill = fill("555555")
-    c.alignment = aln()
-
-# ── Row 4: column headers ──────────────────────────────────────────────────
-set_cell(ws2, 4, 1, value="Stage", bold=True, col_font=WHT, bg=NAVY)
-set_cell(ws2, 4, 2, value="Section", bold=True, col_font=WHT, bg=NAVY)
-ws2.row_dimensions[4].height = 18
-
-col4_labels = {
-    0:"D = P·[HCl]^Q", 1:"a (lower diag)", 2:"b (main diag)",
-    3:"c (upper diag)", 4:"d (RHS)",
-    5:"c′ (fwd sweep)", 6:"d′ (fwd sweep)", 7:"y = org conc (g/L)"
-}
-for elem in ELEMS:
-    s = ESTART[elem]
-    for off, lbl in col4_labels.items():
-        c = ws2.cell(row=4, column=s+off)
-        c.value = lbl
-        c.font = fnt(bold=True, col=WHT, sz=9)
-        c.fill = fill(elem_colors[elem])
-        c.alignment = aln(wrap=True)
-    ws2.row_dimensions[4].height = 30
-
-for off, lbl in enumerate(["x_Pr = y/D_Pr","x_Nd = y/D_Nd","x_Tb = y/D_Tb","x_Dy = y/D_Dy"]):
-    c = ws2.cell(row=4, column=35+off)
-    c.value = lbl
-    c.font = fnt(bold=True, col=WHT, sz=9)
-    c.fill = fill(NAVY)
-    c.alignment = aln(wrap=True)
-
-for col, lbl in [(39,"Total Organic (g/L)"),(40,"Total Aqueous (g/L)")]:
-    c = ws2.cell(row=4, column=col)
-    c.value = lbl
-    c.font = fnt(bold=True, col=WHT, sz=9)
-    c.fill = fill(NAVY)
-    c.alignment = aln(wrap=True)
-
-# ── Section helper (used only for RESULTS row colors, not SOLVER) ────────────
-def section_of(stage):
-    if stage <= 10:   return "Extraction", YLW
-    elif stage <= 20: return "Scrub",      LGRN
-    else:             return "Strip",      LRED
-
-# ── Data rows (stages 1-25, rows 5-29) ────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+# ROWS 20-44 — SOLVER DATA (stages 1-25)
+# ═════════════════════════════════════════════════════════════════════════════
 for n in range(1, N+1):
-    row = R0 + n - 1  # e.g. stage 1 → row 5
+    row = R0 + n - 1   # row 20..44
 
-    # Stage# — plain, color handled by conditional formatting below
-    c = ws2.cell(row=row, column=1)
-    c.value = n
-    c.font = fnt(bold=True, col="000000", sz=10)
-    c.fill = fill(WHT)
-    c.alignment = aln()
-    c.border = brd()
+    # Stage# — color via conditional formatting applied below
+    c=ws.cell(row=row,column=1); c.value=n; c.font=fnt(bold=True,col="000000",sz=10)
+    c.fill=fill(WHT); c.alignment=aln(); c.border=brd()
 
-    # Section label — dynamic Excel formula, not hardcoded string
-    c = ws2.cell(row=row, column=2)
-    c.value = (f'=IF(A{row}<={REF["n_ext"]},"Extraction",'
-               f'IF(A{row}<={REF["n_ext"]}+{REF["n_scr"]},"Scrub","Strip"))')
-    c.font = fnt(col="000000", sz=9)
-    c.fill = fill(WHT)
-    c.alignment = aln()
-    c.border = brd()
+    # Section label — dynamic formula
+    c=ws.cell(row=row,column=2)
+    c.value=(f'=IF(A{row}<={REF["n_ext"]},"Extraction",'
+             f'IF(A{row}<={REF["n_ext"]}+{REF["n_scr"]},"Scrub","Strip"))')
+    c.font=fnt(col="000000",sz=9); c.fill=fill(WHT); c.alignment=aln(); c.border=brd()
 
-    for elem in ELEMS:
-        s = ESTART[elem]
-        Dc  = gcl(s+0); ac  = gcl(s+1); bc  = gcl(s+2)
+    for e in ELEMS:
+        s   = ESTART[e]
+        Dc  = gcl(s);   ac  = gcl(s+1); bc  = gcl(s+2)
         cc  = gcl(s+3); dc  = gcl(s+4); cpc = gcl(s+5)
         dpc = gcl(s+6); yc  = gcl(s+7)
+        ebg = XBLUE if n%2==0 else WHT
 
-        # bg for element (light shade of element color)
-        ebg = XBLUE if n % 2 == 0 else WHT
+        formulas = [f_D(row,e), f_a(row), f_b(row,Dc), f_c(row,Dc), f_d(row,e),
+                    f_cp(row,bc,cc,ac,cpc), f_dp(row,bc,dc,ac,cpc,dpc), f_y(row,dpc,cpc,yc)]
+        for off,frm in enumerate(formulas):
+            c=ws.cell(row=row,column=s+off); c.value=frm
+            c.font=fnt(col="000000",sz=9); c.fill=fill(ebg)
+            c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
-        frm_D  = f_D(row, elem)
-        frm_a  = f_a(row)
-        frm_b  = f_b(row, Dc)
-        frm_c  = f_c(row, Dc)
-        frm_d  = f_d(row, elem)
-        frm_cp = f_cp(row, bc, cc, ac, cpc)
-        frm_dp = f_dp(row, bc, dc, ac, cpc, dpc)
-        frm_y  = f_y(row, dpc, cpc, yc)
+    # Aqueous x_i = y/D
+    for e in ELEMS:
+        s=ESTART[e]; Dc=gcl(s); yc=gcl(s+7); xc=XCOL[e]
+        c=ws.cell(row=row,column=xc)
+        c.value=f"=IF({Dc}{row}<>0,{yc}{row}/{Dc}{row},0)"
+        c.font=fnt(col="000000",sz=10); c.fill=fill(LBLUE)
+        c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
-        for off, frm in enumerate([frm_D, frm_a, frm_b, frm_c, frm_d, frm_cp, frm_dp, frm_y]):
-            c = ws2.cell(row=row, column=s+off)
-            c.value = frm
-            c.font = fnt(col="000000", sz=9)
-            c.fill = fill(ebg)
-            c.alignment = aln()
-            c.border = brd()
-            c.number_format = "0.0000"
+    # Total organic
+    c=ws.cell(row=row,column=39)
+    c.value="="+"+".join(f"{gcl(ESTART[e]+7)}{row}" for e in ELEMS)
+    c.font=fnt(bold=True,col="000000",sz=10); c.fill=fill(LBLUE)
+    c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
-    # Aqueous x_i = y_i / D_i
-    for elem in ELEMS:
-        s   = ESTART[elem]
-        Dc  = gcl(s+0); yc = gcl(s+7)
-        xcol = XCOL[elem]
-        c = ws2.cell(row=row, column=xcol)
-        # Protect against D=0 (shouldn't happen but guards div errors)
-        c.value = f"=IF({Dc}{row}<>0,{yc}{row}/{Dc}{row},0)"
-        c.font = fnt(col="000000", sz=10)
-        c.fill = fill(LBLUE)
-        c.alignment = aln()
-        c.border = brd()
-        c.number_format = "0.0000"
+    # Total aqueous
+    c=ws.cell(row=row,column=40)
+    c.value="="+"+".join(f"{gcl(XCOL[e])}{row}" for e in ELEMS)
+    c.font=fnt(bold=True,col="000000",sz=10); c.fill=fill(LBLUE)
+    c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
-    # Total organic  = sum of all y_i
-    c = ws2.cell(row=row, column=39)
-    y_cells = "+".join(f"{gcl(ESTART[e]+7)}{row}" for e in ELEMS)
-    c.value = f"={y_cells}"
-    c.font = fnt(bold=True, col="000000", sz=10)
-    c.fill = fill(LBLUE)
-    c.alignment = aln()
-    c.border = brd()
-    c.number_format = "0.0000"
+# ── Conditional formatting for section colors (cols A:B, rows 20-44) ─────────
+cf_rng = f"A{R0}:B{R1}"
+ws.conditional_formatting.add(cf_rng,
+    FormulaRule(formula=[f"$A{R0}>{REF['n_ext']}+{REF['n_scr']}"],
+                fill=PatternFill("solid",fgColor=LRED),  stopIfTrue=False))
+ws.conditional_formatting.add(cf_rng,
+    FormulaRule(formula=[f"$A{R0}>{REF['n_ext']}"],
+                fill=PatternFill("solid",fgColor=LGRN),  stopIfTrue=False))
+ws.conditional_formatting.add(cf_rng,
+    FormulaRule(formula=[f"$A{R0}<={REF['n_ext']}"],
+                fill=PatternFill("solid",fgColor=YLW),   stopIfTrue=False))
 
-    # Total aqueous  = sum of all x_i
-    c = ws2.cell(row=row, column=40)
-    x_cells = "+".join(f"{gcl(XCOL[e])}{row}" for e in ELEMS)
-    c.value = f"={x_cells}"
-    c.font = fnt(bold=True, col="000000", sz=10)
-    c.fill = fill(LBLUE)
-    c.alignment = aln()
-    c.border = brd()
-    c.number_format = "0.0000"
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE PROFILE TABLE (for charts)
+# ═════════════════════════════════════════════════════════════════════════════
+ws.row_dimensions[R1+2].height = 8
 
-# ── Conditional formatting for section colors in SOLVER (cols A:B only) ──────
-# Apply to A5:B29 — rules evaluated top-to-bottom; first match wins in Excel.
-# Strip rule first (else branch), then Scrub, then Extraction (most specific last
-# in openpyxl — but Excel priority is insertion order, so we add Ext last = highest).
-cf_range = f"A{R0}:B{R1}"
+ws.merge_cells(f"A{PROF_HDR}:{gcl(9)}{PROF_HDR}")
+c=ws.cell(row=PROF_HDR,column=1)
+c.value="STAGE PROFILE  (aqueous concentrations, g/L)  —  used for charts below"
+c.font=fnt(bold=True,col=WHT,sz=11); c.fill=fill(NAVY); c.alignment=aln(h="left")
+ws.row_dimensions[PROF_HDR].height=20
 
-# Strip: stage > n_ext + n_scr
-ws2.conditional_formatting.add(
-    cf_range,
-    FormulaRule(
-        formula=[f"$A{R0}>{REF['n_ext']}+{REF['n_scr']}"],
-        fill=PatternFill("solid", fgColor=LRED),
-        stopIfTrue=False,
-    )
-)
-# Scrub: stage > n_ext (and not strip, handled by priority)
-ws2.conditional_formatting.add(
-    cf_range,
-    FormulaRule(
-        formula=[f"$A{R0}>{REF['n_ext']}"],
-        fill=PatternFill("solid", fgColor=LGRN),
-        stopIfTrue=False,
-    )
-)
-# Extraction: stage <= n_ext (highest priority — added last)
-ws2.conditional_formatting.add(
-    cf_range,
-    FormulaRule(
-        formula=[f"$A{R0}<={REF['n_ext']}"],
-        fill=PatternFill("solid", fgColor=YLW),
-        stopIfTrue=False,
-    )
-)
+for col,lbl in enumerate(["Stage","Section","x_Pr","x_Nd","x_Tb","x_Dy",
+                           "x_NdPr\n(grouped)","%_NdPr","%_Dy"],start=1):
+    sc(ws,PROF_HDR+1,col,val=lbl,bold=True,fc=WHT,bg=BLUE,wrap=True)
+ws.row_dimensions[PROF_HDR+1].height=30
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SHEET 3: RESULTS
-# ─────────────────────────────────────────────────────────────────────────────
-ws3 = wb.create_sheet("RESULTS")
-ws3.column_dimensions["A"].width = 24
-for col in ["B","C","D","E","F","G"]:
-    ws3.column_dimensions[col].width = 16
+def sec_of(n):
+    if n<=10: return "Extraction",YLW
+    elif n<=20: return "Scrub",LGRN
+    else: return "Strip",LRED
 
-# Title
-ws3.merge_cells("A1:G1")
-c = ws3["A1"]
-c.value = "RESULTS  —  SX Circuit Summary"
-c.font = fnt(bold=True, col=WHT, sz=14)
-c.fill = fill(NAVY)
-c.alignment = aln()
-ws3.row_dimensions[1].height = 32
-ws3.row_dimensions[2].height = 8
+for n in range(1,N+1):
+    pr = PROF_R0 + n - 1   # profile row
+    sr = R0 + n - 1        # solver row
+    sec,bg = sec_of(n)
 
-# ── Key indicator ─────────────────────────────────────────────────────────
-ws3.merge_cells("A3:G3")
-c = ws3["A3"]
-c.value = "  KEY METRIC"
-c.font = fnt(bold=True, col=WHT, sz=11)
-c.fill = fill(NAVY)
-c.alignment = aln(h="left")
-ws3.row_dimensions[3].height = 20
+    sc(ws,pr,1,val=n,  fc="000000",bg=bg)
+    sc(ws,pr,2,val=sec,fc="000000",bg=bg)
 
-# Row 4: Loaded Organic at extraction exit (stage n_ext) — dynamic via INDEX
-# SOLVER col AM = col 39; SOLVER row of stage n = 4 + n
-set_cell(ws3, 4, 1, value="Loaded Organic @ Ext Exit (g/L)", bold=True, col_font="000000",
-         bg=YLW, h="left")
-c = set_cell(ws3, 4, 2,
-             formula=f"=INDEX(SOLVER!$AM:$AM,4+{REF['n_ext']})",
-             col_font="000000", bg=YLW)
-c.number_format = "0.00"
-set_cell(ws3, 4, 3, value="[Target: 19.05]", col_font="555555", bg=YLW, border=False)
+    for j,e in enumerate(ELEMS,start=3):
+        xc=gcl(XCOL[e])
+        c=sc(ws,pr,j,frm=f"=${xc}${sr}",fc="000000",bg=bg); c.number_format="0.0000"
 
-ws3.row_dimensions[5].height = 8
+    # x_NdPr = x_Nd + x_Pr (cols D+C in profile = cols 4+3)
+    c=sc(ws,pr,7,frm=f"=C{pr}+D{pr}",fc="000000",bg=LBLUE); c.number_format="0.0000"
 
-# ── Compositions table ────────────────────────────────────────────────────
-ws3.merge_cells("A6:G6")
-c = ws3["A6"]
-c.value = "  COMPOSITIONS & DISTRIBUTIONS"
-c.font = fnt(bold=True, col=WHT, sz=11)
-c.fill = fill(NAVY)
-c.alignment = aln(h="left")
-ws3.row_dimensions[6].height = 20
+    tot = f"(C{pr}+D{pr}+E{pr}+F{pr})"
+    c=sc(ws,pr,8,frm=f"=IF({tot}=0,0,(C{pr}+D{pr})/{tot}*100)",
+         fc="000000",bg=XBLUE); c.number_format="0.00"
+    c=sc(ws,pr,9,frm=f"=IF({tot}=0,0,F{pr}/{tot}*100)",
+         fc="000000",bg=XBLUE); c.number_format="0.00"
 
-hdrs = ["Element", "Feed Conc.\n(g/L)", "Raff Conc.\n(g/L)", "Preg Conc.\n(g/L)",
-        "% Feed", "% Raffinate", "% Preg"]
-for j, lbl in enumerate(hdrs, start=1):
-    c = set_cell(ws3, 7, j, value=lbl, bold=True, col_font=WHT, bg=BLUE, wrap=True)
-ws3.row_dimensions[7].height = 30
+# ═════════════════════════════════════════════════════════════════════════════
+# CHARTS
+# ═════════════════════════════════════════════════════════════════════════════
+cats = Reference(ws, min_col=1, max_col=1, min_row=PROF_R0, max_row=PROF_R1)
 
-# Raff = aqueous at stage 1  → always SOLVER row 5 (stage 1 never changes)
-# Preg = aqueous at stage n_ext+n_scr+1 (first strip stage) → dynamic INDEX
-# SOLVER row of stage n  =  4 + n
+# ── Chart 1: Absolute concentrations ─────────────────────────────────────────
+ch1 = LineChart()
+ch1.title        = "Aqueous Distributions — Absolute"
+ch1.style        = 10
+ch1.width        = 22
+ch1.height       = 14
+ch1.x_axis.title = "Stage"
+ch1.y_axis.title = "Aqueous Concentration (g/L)"
+ch1.x_axis.numFmt = "0"
+ch1.y_axis.numFmt = "0.00"
+ch1.x_axis.tickLblPos = "low"
+ch1.legend.position   = "tr"
 
-xcol_letter = {e: gcl(XCOL[e]) for e in ELEMS}
+s_ndpr = Series(Reference(ws,min_col=7,max_col=7,min_row=PROF_HDR+1,max_row=PROF_R1),
+                title_from_data=True)
+s_dy   = Series(Reference(ws,min_col=6,max_col=6,min_row=PROF_HDR+1,max_row=PROF_R1),
+                title_from_data=True)
+ch1.append(s_ndpr); ch1.append(s_dy)
+ch1.set_categories(cats)
 
-elem_feed_ref = {"Pr": "INPUTS!$C$25", "Nd": "INPUTS!$C$26",
-                 "Tb": "INPUTS!$C$27", "Dy": "INPUTS!$C$28"}
+ch1.series[0].graphicalProperties.line.solidFill = "2E75B6"
+ch1.series[0].graphicalProperties.line.width     = 22000
+ch1.series[0].marker.symbol  = "circle"
+ch1.series[0].marker.size    = 5
+ch1.series[1].graphicalProperties.line.solidFill = "ED7D31"
+ch1.series[1].graphicalProperties.line.width     = 22000
+ch1.series[1].marker.symbol  = "circle"
+ch1.series[1].marker.size    = 5
 
-ne, ns = REF["n_ext"], REF["n_scr"]
+ws.add_chart(ch1, f"A{PROF_R1+3}")
 
-# Raff: fixed row 5 (stage 1 is always first)
-raff_row = R0   # = 5
+# ── Chart 2: % of Total ───────────────────────────────────────────────────────
+ch2 = LineChart()
+ch2.title        = "Aqueous Distributions — % of Total"
+ch2.style        = 10
+ch2.width        = 22
+ch2.height       = 14
+ch2.x_axis.title = "Stage"
+ch2.y_axis.title = "Aqueous Distribution (%)"
+ch2.x_axis.numFmt = "0"
+ch2.y_axis.numFmt = "0"
+ch2.x_axis.tickLblPos = "low"
+ch2.legend.position   = "tr"
+ch2.y_axis.scaling.min = 0
+ch2.y_axis.scaling.max = 100
 
-# Preg index expression (used inside INDEX)
-preg_idx = f"4+{ne}+{ns}+1"
+s_pndpr = Series(Reference(ws,min_col=8,max_col=8,min_row=PROF_HDR+1,max_row=PROF_R1),
+                 title_from_data=True)
+s_pdy   = Series(Reference(ws,min_col=9,max_col=9,min_row=PROF_HDR+1,max_row=PROF_R1),
+                 title_from_data=True)
+ch2.append(s_pndpr); ch2.append(s_pdy)
+ch2.set_categories(cats)
 
-# Sum helpers using INDEX for preg; fixed row for raff
-def raff_ref(e):  return f"SOLVER!{xcol_letter[e]}{raff_row}"
-def preg_ref(e):  return f"INDEX(SOLVER!${xcol_letter[e]}:${xcol_letter[e]},{preg_idx})"
+ch2.series[0].graphicalProperties.line.solidFill = "2E75B6"
+ch2.series[0].graphicalProperties.line.width     = 22000
+ch2.series[0].marker.symbol  = "circle"
+ch2.series[0].marker.size    = 5
+ch2.series[1].graphicalProperties.line.solidFill = "ED7D31"
+ch2.series[1].graphicalProperties.line.width     = 22000
+ch2.series[1].marker.symbol  = "circle"
+ch2.series[1].marker.size    = 5
 
-sum_feed_frm = "+".join(elem_feed_ref[e] for e in ELEMS)
-sum_raff_frm = "+".join(raff_ref(e) for e in ELEMS)
-sum_preg_frm = "+".join(preg_ref(e) for e in ELEMS)
+ws.add_chart(ch2, f"M{PROF_R1+3}")
 
-for i, elem in enumerate(ELEMS, start=8):
-    bg = XBLUE if i % 2 == 0 else WHT
-    feed_ref = elem_feed_ref[elem]
+# ── Tab color and freeze panes ────────────────────────────────────────────────
+ws.sheet_properties.tabColor = "1F4E79"
+ws.freeze_panes = "C20"   # freeze rows 1-19 and col A-B while scrolling solver
 
-    set_cell(ws3, i, 1, value=elem, bold=True, col_font="000000", bg=bg)
-
-    c = set_cell(ws3, i, 2, formula=f"={feed_ref}", col_font="000000", bg=bg)
-    c.number_format = "0.00"
-
-    # Raff concentration (fixed — stage 1 never moves)
-    c = set_cell(ws3, i, 3, formula=f"={raff_ref(elem)}", col_font="000000", bg=bg)
-    c.number_format = "0.00"
-
-    # Preg concentration (dynamic — tracks n_ext+n_scr+1)
-    c = set_cell(ws3, i, 4, formula=f"={preg_ref(elem)}", col_font="000000", bg=bg)
-    c.number_format = "0.00"
-
-    # % Feed = feed_i / total_feed * 100
-    c = set_cell(ws3, i, 5,
-                 formula=f"=IF(({sum_feed_frm})=0,0,{feed_ref}/({sum_feed_frm})*100)",
-                 col_font="000000", bg=bg)
-    c.number_format = "0.00"
-
-    # % Raffinate
-    c = set_cell(ws3, i, 6,
-                 formula=f"=IF(({sum_raff_frm})=0,0,"
-                         f"{raff_ref(elem)}/({sum_raff_frm})*100)",
-                 col_font="000000", bg=bg)
-    c.number_format = "0.00"
-
-    # % Preg
-    c = set_cell(ws3, i, 7,
-                 formula=f"=IF(({sum_preg_frm})=0,0,"
-                         f"{preg_ref(elem)}/({sum_preg_frm})*100)",
-                 col_font="000000", bg=bg)
-    c.number_format = "0.00"
-
-ws3.row_dimensions[13].height = 8
-
-# ── Stage profile table (for charts) ─────────────────────────────────────
-ws3.merge_cells("A14:G14")
-c = ws3["A14"]
-c.value = "  STAGE PROFILE  (pulled from SOLVER — used for charts)"
-c.font = fnt(bold=True, col=WHT, sz=11)
-c.fill = fill(NAVY)
-c.alignment = aln(h="left")
-ws3.row_dimensions[14].height = 20
-
-# Headers
-for j, lbl in enumerate(["Stage","Section","x_Pr","x_Nd","x_Tb","x_Dy",
-                          "x_NdPr (grouped)"], start=1):
-    c = set_cell(ws3, 15, j, value=lbl, bold=True, col_font=WHT, bg=BLUE, wrap=True)
-ws3.row_dimensions[15].height = 30
-
-# Additional columns for % of total per stage (for pct chart)
-for j, lbl in enumerate(["%_NdPr","%_Dy"], start=8):
-    c = set_cell(ws3, 15, j, value=lbl, bold=True, col_font=WHT, bg=BLUE)
-
-# Data rows (stages 1-25, RESULTS rows 16-40)
-for n in range(1, N+1):
-    row = 15 + n        # rows 16-40
-    srow = R0 + n - 1   # corresponding SOLVER row
-
-    section, sec_bg = section_of(n)
-    bg = sec_bg if n % 2 != 0 else WHT
-
-    set_cell(ws3, row, 1, value=n, col_font="000000", bg=bg)
-    set_cell(ws3, row, 2, value=section, col_font="000000", bg=bg)
-
-    for j, elem in enumerate(ELEMS, start=3):
-        xc = xcol_letter[elem]
-        c = set_cell(ws3, row, j,
-                     formula=f"=SOLVER!{xc}{srow}",
-                     col_font="000000", bg=bg)
-        c.number_format = "0.0000"
-
-    # x_NdPr = x_Nd + x_Pr (columns 4 and 3 in this table → C and D)
-    c = set_cell(ws3, row, 7,
-                 formula=f"=C{row}+D{row}",
-                 col_font="000000", bg=LBLUE)
-    c.number_format = "0.0000"
-
-    # % NdPr = (x_Nd+x_Pr)/(total aq at this stage)*100
-    # total aq at this stage = x_Pr+x_Nd+x_Tb+x_Dy = C+D+E+F
-    c = set_cell(ws3, row, 8,
-                 formula=f"=IF((C{row}+D{row}+E{row}+F{row})=0,0,"
-                         f"(C{row}+D{row})/(C{row}+D{row}+E{row}+F{row})*100)",
-                 col_font="000000", bg=XBLUE)
-    c.number_format = "0.00"
-
-    # % Dy
-    c = set_cell(ws3, row, 9,
-                 formula=f"=IF((C{row}+D{row}+E{row}+F{row})=0,0,"
-                         f"F{row}/(C{row}+D{row}+E{row}+F{row})*100)",
-                 col_font="000000", bg=XBLUE)
-    c.number_format = "0.00"
-
-# ── Chart 1: Aqueous Concentrations — Absolute (g/L) ─────────────────────
-# Stage 1-25 in col A (rows 16-40), NdPr in col G, Dy in col F
-
-chart1 = LineChart()
-chart1.title       = "Aqueous Distributions — Absolute"
-chart1.style       = 10
-chart1.y_axis.title = "Aqueous Concentration X, g/L"
-chart1.x_axis.title = "Stage"
-chart1.width       = 20
-chart1.height      = 14
-
-# NdPr series (col G = 7, rows 16-40)
-data_ndpr = Reference(ws3, min_col=7, max_col=7, min_row=15, max_row=40)
-s1 = Series(data_ndpr, title_from_data=True)
-chart1.append(s1)
-
-# Dy series (col F = 6, rows 16-40)
-data_dy = Reference(ws3, min_col=6, max_col=6, min_row=15, max_row=40)
-s2 = Series(data_dy, title_from_data=True)
-chart1.append(s2)
-
-# Stage labels (col A)
-cats = Reference(ws3, min_col=1, max_col=1, min_row=16, max_row=40)
-chart1.set_categories(cats)
-
-chart1.series[0].graphicalProperties.line.solidFill = "2E75B6"  # NdPr blue
-chart1.series[0].graphicalProperties.line.width = 20000
-chart1.series[1].graphicalProperties.line.solidFill = "ED7D31"  # Dy orange
-chart1.series[1].graphicalProperties.line.width = 20000
-
-chart1.series[0].marker.symbol = "circle"
-chart1.series[1].marker.symbol = "circle"
-
-ws3.add_chart(chart1, "A42")
-
-# ── Chart 2: Aqueous Distributions — % of Total ──────────────────────────
-chart2 = LineChart()
-chart2.title        = "Aqueous Distributions — % of Total"
-chart2.style        = 10
-chart2.y_axis.title = "Aqueous Distribution, %"
-chart2.x_axis.title = "Stage"
-chart2.width        = 20
-chart2.height       = 14
-chart2.y_axis.numFmt = '0"%"'
-chart2.y_axis.scaling.min = 0
-chart2.y_axis.scaling.max = 100
-
-# %NdPr series (col H = 8)
-data_pndpr = Reference(ws3, min_col=8, max_col=8, min_row=15, max_row=40)
-s3 = Series(data_pndpr, title_from_data=True)
-chart2.append(s3)
-
-# %Dy series (col I = 9)
-data_pdy = Reference(ws3, min_col=9, max_col=9, min_row=15, max_row=40)
-s4 = Series(data_pdy, title_from_data=True)
-chart2.append(s4)
-
-chart2.set_categories(cats)
-
-chart2.series[0].graphicalProperties.line.solidFill = "2E75B6"
-chart2.series[0].graphicalProperties.line.width = 20000
-chart2.series[1].graphicalProperties.line.solidFill = "ED7D31"
-chart2.series[1].graphicalProperties.line.width = 20000
-chart2.series[0].marker.symbol = "circle"
-chart2.series[1].marker.symbol = "circle"
-
-ws3.add_chart(chart2, "K42")
-
-# ── Tab colors ────────────────────────────────────────────────────────────
-ws.sheet_properties.tabColor   = "1F4E79"
-ws2.sheet_properties.tabColor  = "2E75B6"
-ws3.sheet_properties.tabColor  = "70AD47"
-
-# ── Save ──────────────────────────────────────────────────────────────────
+# ── Save ──────────────────────────────────────────────────────────────────────
 out = "/home/user/SX-simulation/SX_Steady_State_Model.xlsx"
 wb.save(out)
 print(f"Saved: {out}")
+print(f"INPUTS:  rows 3-14, cols A-P")
+print(f"SOLVER:  rows 16-44, cols A-AN ({gcl(40)})")
+print(f"PROFILE: rows {PROF_HDR}-{PROF_R1}, cols A-I")
+print(f"CHARTS:  rows {PROF_R1+3}+")
