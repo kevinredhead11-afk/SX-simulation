@@ -17,12 +17,7 @@ Feed enters at cell B = n_ext.
 Strip acid enters at cell D = N.
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox
 import numpy as np
-import matplotlib
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
 
 
 # ---------------------------------------------------------------------------
@@ -237,13 +232,25 @@ DEFAULT_ELEMENTS = [
 
 
 # ---------------------------------------------------------------------------
-# GUI
+# GUI  (imports here so tkinter is never loaded when used as a library)
 # ---------------------------------------------------------------------------
+
+def _load_gui_deps():
+    global tk, ttk, messagebox, plt, COLORS
+    import tkinter as _tk
+    from tkinter import ttk as _ttk, messagebox as _mb
+    import matplotlib
+    matplotlib.use("TkAgg")
+    import matplotlib.pyplot as _plt
+    tk = _tk
+    ttk = _ttk
+    messagebox = _mb
+    plt = _plt
 
 COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
 
 
-class SXApp(tk.Tk):
+class SXApp:
     def __init__(self):
         super().__init__()
         self.title("SX Simulation by Alind Chandra")
@@ -509,5 +516,6 @@ class SXApp(tk.Tk):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    _load_gui_deps()
     app = SXApp()
     app.mainloop()
