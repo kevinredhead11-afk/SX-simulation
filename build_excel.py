@@ -6,6 +6,7 @@ Alind formulation  —  D2EHPA / HCl  —  TDMA steady-state solver
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.chart import LineChart, Reference, Series
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.utils import get_column_letter as gcl
 
 # ── Layout constants ──────────────────────────────────────────────────────────
@@ -375,9 +376,8 @@ for col, lbl in [(39,"Total Organic (g/L)"),(40,"Total Aqueous (g/L)")]:
     c.fill = fill(NAVY)
     c.alignment = aln(wrap=True)
 
-# ── Section boundary helpers ───────────────────────────────────────────────
+# ── Section helper (used only for RESULTS row colors, not SOLVER) ────────────
 def section_of(stage):
-    # hard-coded for default 10/10/5
     if stage <= 10:   return "Extraction", YLW
     elif stage <= 20: return "Scrub",      LGRN
     else:             return "Strip",      LRED
@@ -385,20 +385,21 @@ def section_of(stage):
 # ── Data rows (stages 1-25, rows 5-29) ────────────────────────────────────
 for n in range(1, N+1):
     row = R0 + n - 1  # e.g. stage 1 → row 5
-    section, sec_bg = section_of(n)
 
-    # Stage# and Section
+    # Stage# — plain, color handled by conditional formatting below
     c = ws2.cell(row=row, column=1)
     c.value = n
     c.font = fnt(bold=True, col="000000", sz=10)
-    c.fill = fill(sec_bg)
+    c.fill = fill(WHT)
     c.alignment = aln()
     c.border = brd()
 
+    # Section label — dynamic Excel formula, not hardcoded string
     c = ws2.cell(row=row, column=2)
-    c.value = section
+    c.value = (f'=IF(A{row}<={REF["n_ext"]},"Extraction",'
+               f'IF(A{row}<={REF["n_ext"]}+{REF["n_scr"]},"Scrub","Strip"))')
     c.font = fnt(col="000000", sz=9)
-    c.fill = fill(sec_bg)
+    c.fill = fill(WHT)
     c.alignment = aln()
     c.border = brd()
 
@@ -463,6 +464,40 @@ for n in range(1, N+1):
     c.border = brd()
     c.number_format = "0.0000"
 
+# ── Conditional formatting for section colors in SOLVER (cols A:B only) ──────
+# Apply to A5:B29 — rules evaluated top-to-bottom; first match wins in Excel.
+# Strip rule first (else branch), then Scrub, then Extraction (most specific last
+# in openpyxl — but Excel priority is insertion order, so we add Ext last = highest).
+cf_range = f"A{R0}:B{R1}"
+
+# Strip: stage > n_ext + n_scr
+ws2.conditional_formatting.add(
+    cf_range,
+    FormulaRule(
+        formula=[f"$A{R0}>{REF['n_ext']}+{REF['n_scr']}"],
+        fill=PatternFill("solid", fgColor=LRED),
+        stopIfTrue=False,
+    )
+)
+# Scrub: stage > n_ext (and not strip, handled by priority)
+ws2.conditional_formatting.add(
+    cf_range,
+    FormulaRule(
+        formula=[f"$A{R0}>{REF['n_ext']}"],
+        fill=PatternFill("solid", fgColor=LGRN),
+        stopIfTrue=False,
+    )
+)
+# Extraction: stage <= n_ext (highest priority — added last)
+ws2.conditional_formatting.add(
+    cf_range,
+    FormulaRule(
+        formula=[f"$A{R0}<={REF['n_ext']}"],
+        fill=PatternFill("solid", fgColor=YLW),
+        stopIfTrue=False,
+    )
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SHEET 3: RESULTS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -490,11 +525,13 @@ c.fill = fill(NAVY)
 c.alignment = aln(h="left")
 ws3.row_dimensions[3].height = 20
 
-# Row 4: Loaded Organic at extraction exit (stage n_ext = stage 10 = row 14 in SOLVER)
-# Total organic at row 14 of SOLVER is column AM (col 39)
+# Row 4: Loaded Organic at extraction exit (stage n_ext) — dynamic via INDEX
+# SOLVER col AM = col 39; SOLVER row of stage n = 4 + n
 set_cell(ws3, 4, 1, value="Loaded Organic @ Ext Exit (g/L)", bold=True, col_font="000000",
          bg=YLW, h="left")
-c = set_cell(ws3, 4, 2, formula="=SOLVER!AM14", col_font="000000", bg=YLW)
+c = set_cell(ws3, 4, 2,
+             formula=f"=INDEX(SOLVER!$AM:$AM,4+{REF['n_ext']})",
+             col_font="000000", bg=YLW)
 c.number_format = "0.00"
 set_cell(ws3, 4, 3, value="[Target: 19.05]", col_font="555555", bg=YLW, border=False)
 
@@ -515,38 +552,46 @@ for j, lbl in enumerate(hdrs, start=1):
     c = set_cell(ws3, 7, j, value=lbl, bold=True, col_font=WHT, bg=BLUE, wrap=True)
 ws3.row_dimensions[7].height = 30
 
-# Raff = aqueous at stage 1 → SOLVER row 5 → x_i columns AI..AL (35..38)
-# Preg = aqueous at first strip stage (stage n_ext+n_scr+1 = 21) → SOLVER row 25
-# Row of stage n in SOLVER = R0 + n - 1 = 4 + n
-raff_row = R0 + 1 - 1   # = 5  (stage 1)
-preg_row = R0 + 21 - 1  # = 25 (stage 21, first strip stage)
+# Raff = aqueous at stage 1  → always SOLVER row 5 (stage 1 never changes)
+# Preg = aqueous at stage n_ext+n_scr+1 (first strip stage) → dynamic INDEX
+# SOLVER row of stage n  =  4 + n
 
 xcol_letter = {e: gcl(XCOL[e]) for e in ELEMS}
 
-elem_rows_in    = {"Pr": "INPUTS!$C$25", "Nd": "INPUTS!$C$26",
-                   "Tb": "INPUTS!$C$27", "Dy": "INPUTS!$C$28"}
+elem_feed_ref = {"Pr": "INPUTS!$C$25", "Nd": "INPUTS!$C$26",
+                 "Tb": "INPUTS!$C$27", "Dy": "INPUTS!$C$28"}
 
-# Sum of all feed concs (denominator for % Feed)
-sum_feed_frm = "+".join(f"INPUTS!$C${r}" for r in range(25, 29))
-# Sum of raff concs
-sum_raff_frm = "+".join(f"SOLVER!{xcol_letter[e]}{raff_row}" for e in ELEMS)
-# Sum of preg concs
-sum_preg_frm = "+".join(f"SOLVER!{xcol_letter[e]}{preg_row}" for e in ELEMS)
+ne, ns = REF["n_ext"], REF["n_scr"]
+
+# Raff: fixed row 5 (stage 1 is always first)
+raff_row = R0   # = 5
+
+# Preg index expression (used inside INDEX)
+preg_idx = f"4+{ne}+{ns}+1"
+
+# Sum helpers using INDEX for preg; fixed row for raff
+def raff_ref(e):  return f"SOLVER!{xcol_letter[e]}{raff_row}"
+def preg_ref(e):  return f"INDEX(SOLVER!${xcol_letter[e]}:${xcol_letter[e]},{preg_idx})"
+
+sum_feed_frm = "+".join(elem_feed_ref[e] for e in ELEMS)
+sum_raff_frm = "+".join(raff_ref(e) for e in ELEMS)
+sum_preg_frm = "+".join(preg_ref(e) for e in ELEMS)
 
 for i, elem in enumerate(ELEMS, start=8):
     bg = XBLUE if i % 2 == 0 else WHT
-    xc = xcol_letter[elem]
-    feed_ref = elem_rows_in[elem]
+    feed_ref = elem_feed_ref[elem]
 
     set_cell(ws3, i, 1, value=elem, bold=True, col_font="000000", bg=bg)
 
     c = set_cell(ws3, i, 2, formula=f"={feed_ref}", col_font="000000", bg=bg)
     c.number_format = "0.00"
 
-    c = set_cell(ws3, i, 3, formula=f"=SOLVER!{xc}{raff_row}", col_font="000000", bg=bg)
+    # Raff concentration (fixed — stage 1 never moves)
+    c = set_cell(ws3, i, 3, formula=f"={raff_ref(elem)}", col_font="000000", bg=bg)
     c.number_format = "0.00"
 
-    c = set_cell(ws3, i, 4, formula=f"=SOLVER!{xc}{preg_row}", col_font="000000", bg=bg)
+    # Preg concentration (dynamic — tracks n_ext+n_scr+1)
+    c = set_cell(ws3, i, 4, formula=f"={preg_ref(elem)}", col_font="000000", bg=bg)
     c.number_format = "0.00"
 
     # % Feed = feed_i / total_feed * 100
@@ -555,17 +600,17 @@ for i, elem in enumerate(ELEMS, start=8):
                  col_font="000000", bg=bg)
     c.number_format = "0.00"
 
-    # % Raffinate = x_i_raff / sum_raff * 100
+    # % Raffinate
     c = set_cell(ws3, i, 6,
                  formula=f"=IF(({sum_raff_frm})=0,0,"
-                         f"SOLVER!{xc}{raff_row}/({sum_raff_frm})*100)",
+                         f"{raff_ref(elem)}/({sum_raff_frm})*100)",
                  col_font="000000", bg=bg)
     c.number_format = "0.00"
 
-    # % Preg = x_i_preg / sum_preg * 100
+    # % Preg
     c = set_cell(ws3, i, 7,
                  formula=f"=IF(({sum_preg_frm})=0,0,"
-                         f"SOLVER!{xc}{preg_row}/({sum_preg_frm})*100)",
+                         f"{preg_ref(elem)}/({sum_preg_frm})*100)",
                  col_font="000000", bg=bg)
     c.number_format = "0.00"
 
