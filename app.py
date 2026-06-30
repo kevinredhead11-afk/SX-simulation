@@ -6,7 +6,7 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from sx_simulation import solve_sx, compute_summary, DEFAULT_ELEMENTS
+from sx_core import solve_sx, compute_summary, DEFAULT_ELEMENTS
 import copy
 
 st.set_page_config(page_title="SX Simulation", layout="wide")
