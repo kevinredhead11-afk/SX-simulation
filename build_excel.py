@@ -567,6 +567,324 @@ ch2 = make_chart("Aqueous Distributions — % of Total",
 ws.add_chart(ch1, f"A{PROF_R1+3}")
 ws.add_chart(ch2, f"M{PROF_R1+3}")
 
+# ═════════════════════════════════════════════════════════════════════════════
+# SAPONIFICATION  &  ORGANIC LOADING
+# Placed well below charts (charts float; data rows below are safe)
+# ═════════════════════════════════════════════════════════════════════════════
+from openpyxl.worksheet.datavalidation import DataValidation
+
+SAP_START = PROF_R1 + 42       # first row of this section (≈ row 114)
+
+# ── Molecular weights & constants ─────────────────────────────────────────────
+MW = {"Pr": 140.91, "Nd": 144.24, "Tb": 158.93, "Dy": 162.50}
+MW_D2EHPA   = 322.4   # g/mol
+MW_CYN801   = 290.4   # g/mol  (bis(2,4,4-trimethylpentyl)phosphinic acid)
+DEN_D2EHPA  = 0.975   # g/mL
+DEN_CYN801  = 0.870   # g/mL
+DEN_ORFOM   = 0.785   # g/mL
+DEN_KERO    = 0.800   # g/mL
+MW_NaOH     = 40.0
+
+# y_org column indices: Pr=J(10), Nd=R(18), Tb=Z(26), Dy=AH(34)
+YCOL_IDX = {"Pr": 10, "Nd": 18, "Tb": 26, "Dy": 34}
+YCOL_LET = {"Pr": "J", "Nd": "R", "Tb": "Z", "Dy": "AH"}
+# Total organic column = AM (39)
+AM_COL = 39
+
+ne = REF["n_ext"]   # "$B$5"
+O  = REF["O"]       # "$B$13"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def sap_lbl(row, col, txt, bold=False, span=None):
+    if span:
+        ws.merge_cells(f"{gcl(col)}{row}:{gcl(col+span-1)}{row}")
+    c = ws.cell(row=row, column=col)
+    c.value = txt
+    c.font  = font(bold=bold, col="2E4057", sz=9)
+    c.fill  = fill("F5F7FA")
+    c.alignment = aln(h="left")
+    c.border = brd()
+
+def sap_unit(row, col, txt):
+    c = ws.cell(row=row, column=col)
+    c.value = txt
+    c.font  = font(col="757575", sz=8)
+    c.fill  = fill("F5F7FA")
+    c.alignment = aln(h="left")
+    c.border = brd()
+
+def sap_blank(row, col, span=1):
+    for cc in range(col, col+span):
+        c = ws.cell(row=row, column=cc)
+        c.fill = fill("F5F7FA")
+        c.border = brd()
+
+def panel_hdr(row, c1, c2, txt, bg=T_SECHDR):
+    ws.merge_cells(f"{gcl(c1)}{row}:{gcl(c2)}{row}")
+    c = ws.cell(row=row, column=c1)
+    c.value = txt
+    c.font  = font(bold=True, col=WHT, sz=9)
+    c.fill  = fill(bg)
+    c.alignment = aln(h="left")
+    c.border = brd("AAAAAA")
+    ws.row_dimensions[row].height = 17
+
+def sub_hdr(row, c1, c2, txt, bg="4A6FA5"):
+    ws.merge_cells(f"{gcl(c1)}{row}:{gcl(c2)}{row}")
+    c = ws.cell(row=row, column=c1)
+    c.value = txt
+    c.font  = font(bold=True, col=WHT, sz=8)
+    c.fill  = fill(bg)
+    c.alignment = aln(h="left")
+    c.border = brd("AAAAAA")
+    ws.row_dimensions[row].height = 15
+
+# ── Section main header ────────────────────────────────────────────────────────
+ws.row_dimensions[SAP_START - 1].height = 12   # spacer
+ws.merge_cells(f"A{SAP_START}:{gcl(14)}{SAP_START}")
+c = ws.cell(row=SAP_START, column=1)
+c.value = "  SAPONIFICATION  ·  ORGANIC LOADING  ·  REAGENT REQUIREMENTS"
+c.font  = font(bold=True, col=WHT, sz=12)
+c.fill  = fill(T_TITLE)
+c.alignment = aln(h="left")
+ws.row_dimensions[SAP_START].height = 26
+
+# ── Panel sub-headers (row SAP_START+1) ───────────────────────────────────────
+panel_hdr(SAP_START+1,  1,  4, "  Organic System — Inputs")
+panel_hdr(SAP_START+1,  6,  9, "  Saponification Calculation")
+panel_hdr(SAP_START+1, 11, 14, "  Maximum Organic Loading")
+
+# ── Column headers (row SAP_START+2) ──────────────────────────────────────────
+ws.row_dimensions[SAP_START+2].height = 15
+for col, txt, bg in [
+        (1,"Parameter",T_COLHDR),(2,"Value",T_COLHDR),(3,"Units",T_COLHDR),(4,"",T_COLHDR),
+        (6,"Parameter",T_COLHDR),(7,"Value",T_COLHDR),(8,"Units",T_COLHDR),(9,"",T_COLHDR),
+        (11,"Parameter",T_COLHDR),(12,"Value",T_COLHDR),(13,"Units",T_COLHDR),(14,"",T_COLHDR),
+]:
+    hdr_col(ws, SAP_START+2, col, txt, bg=bg, sz=8)
+sap_blank(SAP_START+2, 5); sap_blank(SAP_START+2, 10)
+
+# ── Data rows start ────────────────────────────────────────────────────────────
+r = SAP_START + 3    # first data row
+
+# Set uniform row height for data rows
+for i in range(16):
+    ws.row_dimensions[r + i].height = 16
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PANEL 1 — Organic System Inputs  (cols 1-4)
+# ──────────────────────────────────────────────────────────────────────────────
+p1_rows = [
+    # (label,                 col_B_kind,  default_val,   fmt,       units        )
+    ("Extractant",            "input_str", "Cyanex 801",  None,      "—"          ),
+    ("Extractant  MW",        "calc",      None,          "0.0",     "g/mol"      ),
+    ("Diluent",               "input_str", "Orfom",       None,      "—"          ),
+    ("Diluent density",       "calc",      None,          "0.000",   "g/mL"       ),
+    ("Organic density",       "calc",      None,          "0.000",   "g/mL"       ),
+    ("% Extractant",          "input_num", 10.0,          "0.0",     "vol %"      ),
+    ("[Extractant]",          "calc",      None,          "0.0",     "g/L org"    ),
+    ("[Extractant]",          "calc",      None,          "0.000",   "mol/L org"  ),
+    ("NaOH concentration",    "input_num", 20.0,          "0.0",     "wt %"       ),
+    ("NaOH soln density",     "calc",      None,          "0.000",   "g/mL"       ),
+    ("[NaOH] solution",       "calc",      None,          "0.000",   "mol/L"      ),
+    ("NaOH flowrate",         "input_num", 0.0,           "0.000",   "same unit as O"),
+]
+
+for i, (lbl, kind, defval, fmt, units) in enumerate(p1_rows):
+    ro = r + i
+    sap_lbl(ro, 1, lbl)
+    sap_blank(ro, 4)
+    sap_unit(ro, 3, units)
+    c = ws.cell(row=ro, column=2)
+    c.border = brd()
+    c.alignment = aln()
+    if kind == "input_str":
+        style_input(c, val=defval)
+    elif kind == "input_num":
+        style_input(c, val=defval, nf=fmt)
+    else:  # calc — style only, formula set below
+        c.font  = font(col=C_FG, sz=9)
+        c.fill  = fill(C_BG)
+        if fmt: c.number_format = fmt
+
+# Calc formulas for Panel 1
+# r+0: extractant (input) ; r+1: MW extractant
+ws.cell(row=r+1,  column=2).value  = f'=IF(B{r}="D2EHPA",{MW_D2EHPA},IF(B{r}="Cyanex 801",{MW_CYN801},{MW_D2EHPA}))'
+ws.cell(row=r+1,  column=2).number_format = "0.0"
+# r+2: diluent (input) ; r+3: diluent density
+ws.cell(row=r+3,  column=2).value  = f'=IF(B{r+2}="Orfom",{DEN_ORFOM},IF(B{r+2}="Kerosene",{DEN_KERO},{DEN_ORFOM}))'
+ws.cell(row=r+3,  column=2).number_format = "0.000"
+# r+4: organic density (vol-weighted)
+ws.cell(row=r+4,  column=2).value  = (f'=B{r+5}/100'
+                                       f'*IF(B{r}="D2EHPA",{DEN_D2EHPA},{DEN_CYN801})'
+                                       f'+(1-B{r+5}/100)*B{r+3}')
+ws.cell(row=r+4,  column=2).number_format = "0.000"
+# r+6: [extractant] g/L (vol% × organic density)
+ws.cell(row=r+6,  column=2).value  = f'=B{r+5}/100*B{r+4}*1000'
+ws.cell(row=r+6,  column=2).number_format = "0.0"
+# r+7: [extractant] mol/L
+ws.cell(row=r+7,  column=2).value  = f'=IF(B{r+1}=0,0,B{r+6}/B{r+1})'
+ws.cell(row=r+7,  column=2).number_format = "0.000"
+# r+9: NaOH solution density approx  (ρ ≈ 1 + 0.011×wt%)
+ws.cell(row=r+9,  column=2).value  = f'=1+0.011*B{r+8}'
+ws.cell(row=r+9,  column=2).number_format = "0.000"
+# r+10: [NaOH] mol/L
+ws.cell(row=r+10, column=2).value  = f'=B{r+8}/100*B{r+9}*1000/{MW_NaOH}'
+ws.cell(row=r+10, column=2).number_format = "0.000"
+
+# Dropdowns
+dv_ext = DataValidation(type="list", formula1='"D2EHPA,Cyanex 801"',
+                        allow_blank=False, showDropDown=False)
+dv_dil = DataValidation(type="list", formula1='"Orfom,Kerosene"',
+                        allow_blank=False, showDropDown=False)
+ws.add_data_validation(dv_ext)
+ws.add_data_validation(dv_dil)
+dv_ext.add(ws.cell(row=r,   column=2))
+dv_dil.add(ws.cell(row=r+2, column=2))
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PANEL 2 — Saponification  (cols 6-9)
+# ──────────────────────────────────────────────────────────────────────────────
+# Sub-block A: loaded organic at extraction exit
+sub_hdr(r, 6, 8, "  Loaded Organic at Extraction Exit")
+ws.row_dimensions[r].height = 15
+
+for i, (elem, mw) in enumerate(MW.items(), start=1):
+    ro = r + i
+    col_let = YCOL_LET[elem]
+    sap_lbl(ro, 6, f"y_{elem}  (org. conc., ext exit)")
+    c = ws.cell(row=ro, column=7)
+    style_ref(c, frm=f"=INDEX(${col_let}:${col_let},19+{ne})", nf="0.0000")
+    sap_unit(ro, 8, "g/L org")
+    sap_blank(ro, 9)
+
+# r+5: total
+sap_lbl(r+5, 6, "Total loaded organic", bold=True)
+c = ws.cell(row=r+5, column=7)
+style_output(c, frm=f"=G{r+1}+G{r+2}+G{r+3}+G{r+4}", nf="0.000", sz=9)
+sap_unit(r+5, 8, "g/L org")
+sap_blank(r+5, 9)
+
+# Sub-block B: Theoretical (Alind Eq.10 adapted)
+sub_hdr(r+6, 6, 8, "  Theoretical NaOH  (Alind Eq. 10 — 3 mol NaOH per mol REE³⁺)")
+ws.row_dimensions[r+6].height = 15
+
+sap_lbl(r+7, 6,  "NaOH required")
+sap_lbl(r+8, 6,  "NaOH solution flowrate")
+sap_lbl(r+9, 6,  "Pure NaOH mass rate")
+
+# mol NaOH/time = 3 × O × Σ(y_i / MW_i)
+c = ws.cell(row=r+7, column=7)
+style_calc(c, nf="0.000", sz=9,
+           frm=(f"=3*{O}*(G{r+1}/{MW['Pr']}"
+                f"+G{r+2}/{MW['Nd']}"
+                f"+G{r+3}/{MW['Tb']}"
+                f"+G{r+4}/{MW['Dy']})"))
+sap_unit(r+7, 8, "mol / [O·time]")
+sap_blank(r+7, 9)
+
+# Volume of NaOH solution / time
+c = ws.cell(row=r+8, column=7)
+style_calc(c, nf="0.000", sz=9, frm=f"=IF(B{r+10}=0,0,G{r+7}/B{r+10})")
+sap_unit(r+8, 8, "L soln / [O·time]")
+sap_blank(r+8, 9)
+
+# Pure NaOH mass / time
+c = ws.cell(row=r+9, column=7)
+style_calc(c, nf="0.000", sz=9, frm=f"=G{r+7}*{MW_NaOH}/1000")
+sap_unit(r+9, 8, "kg NaOH / [O·time]")
+sap_blank(r+9, 9)
+
+# Sub-block C: Experimental saponification degree
+sub_hdr(r+10, 6, 8, "  Experimental Saponification Degree")
+ws.row_dimensions[r+10].height = 15
+
+sap_lbl(r+11, 6, "mol NaOH supplied  [per time unit]")
+sap_lbl(r+12, 6, "mol D2EHPA/extr. in organic  [per time unit]")
+sap_lbl(r+13, 6, "SAPONIFICATION DEGREE", bold=True)
+
+c = ws.cell(row=r+11, column=7)
+style_calc(c, nf="0.000", sz=9, frm=f"=B{r+11}*B{r+10}")
+sap_unit(r+11, 8, "mol / time")
+sap_blank(r+11, 9)
+
+c = ws.cell(row=r+12, column=7)
+style_calc(c, nf="0.000", sz=9, frm=f"=B{r+7}*{O}")
+sap_unit(r+12, 8, "mol / time")
+sap_blank(r+12, 9)
+
+c = ws.cell(row=r+13, column=7)
+style_output(c, nf="0.0", sz=10,
+             frm=f"=IF(G{r+12}=0,0,G{r+11}/G{r+12}*100)")
+sap_unit(r+13, 8, "% saponified")
+sap_blank(r+13, 9)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PANEL 3 — Maximum Organic Loading  (cols 11-14)
+# ──────────────────────────────────────────────────────────────────────────────
+sub_hdr(r, 11, 13, "  Extractant Capacity")
+ws.row_dimensions[r].height = 15   # already set above; OK to re-confirm
+
+sap_lbl(r+1, 11, "Available capacity  [extractant / 3]")
+c = ws.cell(row=r+1, column=12)
+style_calc(c, nf="0.000", sz=9, frm=f"=B{r+7}/3")
+sap_unit(r+1, 13, "mol REE / L org")
+sap_blank(r+1, 14)
+
+sub_hdr(r+2, 11, 13, "  Max Loading per Element  (if pure feed)")
+ws.row_dimensions[r+2].height = 15
+
+for i, (elem, mw) in enumerate(MW.items(), start=3):
+    ro = r + i
+    sap_lbl(ro, 11, f"Max loading — {elem}  (pure {elem} feed)")
+    c = ws.cell(row=ro, column=12)
+    style_calc(c, nf="0.0", sz=9, frm=f"=L{r+1}*{mw}")
+    sap_unit(ro, 13, "g/L org")
+    sap_blank(ro, 14)
+
+sub_hdr(r+7, 11, 13, "  Max Loading — Current Feed Composition")
+ws.row_dimensions[r+7].height = 15
+
+# Feed-weighted average REE MW
+xf = [REF[f"XF_{e}"] for e in ELEMS]
+mws_list = list(MW.values())
+num_wt = "+".join(f"{xf[i]}*{mws_list[i]}" for i in range(4))
+den_wt  = "+".join(xf)
+sap_lbl(r+8, 11, "Avg REE MW  (feed-weighted)")
+c = ws.cell(row=r+8, column=12)
+style_calc(c, nf="0.00", sz=9,
+           frm=f"=IF(({den_wt})=0,144.24,({num_wt})/({den_wt}))")
+sap_unit(r+8, 13, "g/mol")
+sap_blank(r+8, 14)
+
+sap_lbl(r+9, 11, "Max loading — mixed REE", bold=True)
+c = ws.cell(row=r+9, column=12)
+style_output(c, nf="0.0", sz=10, frm=f"=L{r+1}*L{r+8}")
+sap_unit(r+9, 13, "g/L org")
+sap_blank(r+9, 14)
+
+sap_lbl(r+10, 11, "Current loaded organic  (from SOLVER)")
+c = ws.cell(row=r+10, column=12)
+style_ref(c, nf="0.0", frm=f"=INDEX($AM:$AM,19+{ne})")
+sap_unit(r+10, 13, "g/L org")
+sap_blank(r+10, 14)
+
+ws.row_dimensions[r+10].height = 16
+
+sap_lbl(r+11, 11, "Loading utilization", bold=True)
+c = ws.cell(row=r+11, column=12)
+style_output(c, nf="0.0", sz=10,
+             frm=f"=IF(L{r+9}=0,0,L{r+10}/L{r+9}*100)")
+sap_unit(r+11, 13, "%  of max capacity used")
+sap_blank(r+11, 14)
+
+ws.row_dimensions[r+11].height = 16
+
+# Spacer col between panels
+for row in range(SAP_START, r+16):
+    ws.cell(row=row, column=5).fill  = fill("FFFFFF")
+    ws.cell(row=row, column=10).fill = fill("FFFFFF")
+
 # ── Tab colour ────────────────────────────────────────────────────────────────
 ws.sheet_properties.tabColor = "1B3A6B"
 
@@ -574,4 +892,4 @@ ws.sheet_properties.tabColor = "1B3A6B"
 out = "/home/user/SX-simulation/SX_Steady_State_Model.xlsx"
 wb.save(out)
 print(f"Saved: {out}")
-print(f"Layout:  legend row 2 | inputs rows 4-15 | solver rows 17-44 | profile rows {PROF_HDR}-{PROF_R1} | charts rows {PROF_R1+3}+")
+print(f"Layout:  legend row 2 | inputs rows 4-15 | solver rows 17-44 | profile rows {PROF_HDR}-{PROF_R1} | charts rows {PROF_R1+3}+ | saponification rows {SAP_START}+")
