@@ -178,8 +178,10 @@ def f_c(row, Dc):
     ne,ns = REF["n_ext"],REF["n_scr"]
     if row == R1: return "=0"
     Dn = f"{Dc}{row+1}"
+    # c=0 at stage n_ext+n_scr: fresh scrub acid enters here (separate circuit from strip)
     return (f"=IF(A{row}>{ne}+{ns},{S}/{Dn},"
-            f"IF(A{row}>={ne},{S}*{R}/{Dn},({S}*{R}+{F})/{Dn}))")
+            f"IF(A{row}={ne}+{ns},0,"
+            f"IF(A{row}>={ne},{S}*{R}/{Dn},({S}*{R}+{F})/{Dn})))")
 
 def f_d(row, elem):
     XF,F,ne = REF[f"XF_{elem}"],REF["F"],REF["n_ext"]
