@@ -15,7 +15,7 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.utils import get_column_letter as gcl
 
 # ── Layout constants ──────────────────────────────────────────────────────────
-N       = 25
+N       = 100
 R0      = 20           # first SOLVER data row (stage 1)
 R1      = R0 + N - 1  # last  SOLVER data row (stage 25 = row 44)
 PROF_HDR = R1 + 3      # stage-profile header row = 47
@@ -156,48 +156,69 @@ def label(ws, row, col, text, bg=None, fc="212121", bold=False, h="left", sz=10)
     c.border = brd()
     return c
 
+# ── Dynamic total stages reference (used by inactive guard) ───────────────────
+NT = f"{REF['n_ext']}+{REF['n_scr']}+{REF['n_str']}"   # "$B$5+$B$6+$B$7"
+GREY_INACTIVE = "D8D8D8"
+
+def inactive_guard(row, formula):
+    """Returns 0 when stage number exceeds the active stage count."""
+    return f"=IF(A{row}>{NT},0,{formula[1:]})"
+
 # ── TDMA formula builders ─────────────────────────────────────────────────────
 def f_D(row, elem):
     P,Q   = REF[f"P_{elem}"], REF[f"Q_{elem}"]
     ne,ns = REF["n_ext"], REF["n_scr"]
     He,Hs,Ht = REF["He"], REF["Hs"], REF["Ht"]
-    return (f"=IF(A{row}<={ne},{P}*{He}^{Q},"
-            f"IF(A{row}<={ne}+{ns},{P}*{Hs}^{Q},{P}*{Ht}^{Q}))")
+    inner = (f"=IF(A{row}<={ne},{P}*{He}^{Q},"
+             f"IF(A{row}<={ne}+{ns},{P}*{Hs}^{Q},{P}*{Ht}^{Q}))")
+    return inactive_guard(row, inner)
 
 def f_a(row):
-    return f"=IF(A{row}=1,0,{REF['O']})"
+    return inactive_guard(row, f"=IF(A{row}=1,0,{REF['O']})")
 
 def f_b(row, Dc):
     O,S,R,F = REF["O"],REF["S"],REF["R"],REF["F"]
     ne,ns,D = REF["n_ext"],REF["n_scr"],f"{Dc}{row}"
-    return (f"=IF(A{row}>{ne}+{ns},-{O}-{S}/{D},"
-            f"IF(A{row}>{ne},-{O}-{S}*{R}/{D},-{O}-({S}*{R}+{F})/{D}))")
+    inner = (f"=IF(A{row}>{ne}+{ns},-{O}-{S}/{D},"
+             f"IF(A{row}>{ne},-{O}-{S}*{R}/{D},-{O}-({S}*{R}+{F})/{D}))")
+    return inactive_guard(row, inner)
 
 def f_c(row, Dc):
     S,R,F = REF["S"],REF["R"],REF["F"]
     ne,ns = REF["n_ext"],REF["n_scr"]
     if row == R1: return "=0"
     Dn = f"{Dc}{row+1}"
-    return (f"=IF(A{row}>{ne}+{ns},{S}/{Dn},"
-            f"IF(A{row}>={ne},{S}*{R}/{Dn},({S}*{R}+{F})/{Dn}))")
+    inner = (f"=IF(A{row}>{ne}+{ns},{S}/{Dn},"
+             f"IF(A{row}>={ne},{S}*{R}/{Dn},({S}*{R}+{F})/{Dn}))")
+    # Double guard: 0 if this stage inactive OR next stage inactive (prevents D_{n+1}=0 div)
+    return f"=IF(A{row}>{NT},0,IF(A{row}+1>{NT},0,{inner[1:]}))"
 
 def f_d(row, elem):
     XF,F,ne = REF[f"XF_{elem}"],REF["F"],REF["n_ext"]
-    return f"=IF(A{row}={ne},-{XF}*{F},0)"
+    return inactive_guard(row, f"=IF(A{row}={ne},-{XF}*{F},0)")
 
 def f_cp(row, bc, cc, ac, cpc):
-    if row == R0: return f"={cc}{row}/{bc}{row}"
-    w = f"({bc}{row}-{ac}{row}*{cpc}{row-1})"
-    return f"={cc}{row}/{w}"
+    if row == R0:
+        inner = f"={cc}{row}/{bc}{row}"
+    else:
+        w = f"({bc}{row}-{ac}{row}*{cpc}{row-1})"
+        inner = f"={cc}{row}/{w}"
+    return inactive_guard(row, inner)
 
 def f_dp(row, bc, dc, ac, cpc, dpc):
-    if row == R0: return f"={dc}{row}/{bc}{row}"
-    w = f"({bc}{row}-{ac}{row}*{cpc}{row-1})"
-    return f"=({dc}{row}-{ac}{row}*{dpc}{row-1})/{w}"
+    if row == R0:
+        inner = f"={dc}{row}/{bc}{row}"
+    else:
+        w = f"({bc}{row}-{ac}{row}*{cpc}{row-1})"
+        inner = f"=({dc}{row}-{ac}{row}*{dpc}{row-1})/{w}"
+    return inactive_guard(row, inner)
 
 def f_y(row, dpc, cpc, yc):
-    if row == R1: return f"={dpc}{row}"
-    return f"={dpc}{row}-{cpc}{row}*{yc}{row+1}"
+    if row == R1:
+        inner = f"={dpc}{row}"
+    else:
+        inner = f"={dpc}{row}-{cpc}{row}*{yc}{row+1}"
+    return inactive_guard(row, inner)
 
 # ═════════════════════════════════════════════════════════════════════════════
 wb = openpyxl.Workbook()
@@ -409,22 +430,19 @@ ws.row_dimensions[19].height = 26
 # ═════════════════════════════════════════════════════════════════════════════
 # SOLVER DATA ROWS 20-44
 # ═════════════════════════════════════════════════════════════════════════════
-def sec_bg(n):
-    if n<=10: return SEC_EXT
-    elif n<=20: return SEC_SCR
-    else: return SEC_STR
-
 for n in range(1, N+1):
     row = R0 + n - 1
-    sbg = sec_bg(n)
+    # Initial background — conditional formatting will override dynamically
+    sbg = GREY_INACTIVE  # default grey; CF rules will color active stages
 
     # Stage# and Section label
     c=ws.cell(row=row,column=1); c.value=n
-    c.font=font(bold=True,col=T_TITLE,sz=10); c.fill=fill(sbg); c.alignment=aln(); c.border=brd()
+    c.font=font(bold=True,col="888888",sz=10); c.fill=fill(sbg); c.alignment=aln(); c.border=brd()
     c=ws.cell(row=row,column=2)
-    c.value=(f'=IF(A{row}<={REF["n_ext"]},"Extraction",'
-             f'IF(A{row}<={REF["n_ext"]}+{REF["n_scr"]},"Scrub","Strip"))')
-    c.font=font(col=T_TITLE,sz=9); c.fill=fill(sbg); c.alignment=aln(); c.border=brd()
+    c.value=(f'=IF(A{row}>{NT},"—",'
+             f'IF(A{row}<={REF["n_ext"]},"Extraction",'
+             f'IF(A{row}<={REF["n_ext"]}+{REF["n_scr"]},"Scrub","Strip")))')
+    c.font=font(col="888888",sz=9); c.fill=fill(sbg); c.alignment=aln(); c.border=brd()
 
     for e in ELEMS:
         s   = ESTART[e]
@@ -441,8 +459,9 @@ for n in range(1, N+1):
         for off,(frm,bg,fg,bd) in enumerate(zip(frms,styles,fgs,bolds)):
             c = ws.cell(row=row, column=s+off)
             c.value = frm
+            # Inactive rows get grey; active rows colored by cell type via CF
             c.font  = font(bold=bd, col=fg, sz=9)
-            c.fill  = fill(bg)
+            c.fill  = fill(GREY_INACTIVE)
             c.alignment = aln()
             c.border = brd()
             c.number_format = "0.0000"
@@ -451,33 +470,42 @@ for n in range(1, N+1):
     for e in ELEMS:
         s=ESTART[e]; Dc=gcl(s); yc=gcl(s+7)
         c=ws.cell(row=row,column=XCOL[e])
-        c.value=f"=IF({Dc}{row}<>0,{yc}{row}/{Dc}{row},0)"
-        c.font=font(col=R_FG,sz=9); c.fill=fill(R_BG)
+        c.value=f"=IF(A{row}>{NT},0,IF({Dc}{row}<>0,{yc}{row}/{Dc}{row},0))"
+        c.font=font(col=R_FG,sz=9); c.fill=fill(GREY_INACTIVE)
         c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
     # Total organic (OUTPUT)
     c=ws.cell(row=row,column=39)
     c.value="="+"+".join(f"{gcl(ESTART[e]+7)}{row}" for e in ELEMS)
-    c.font=font(bold=True,col=O_FG,sz=9); c.fill=fill(O_BG)
+    c.font=font(bold=True,col=O_FG,sz=9); c.fill=fill(GREY_INACTIVE)
     c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
     # Total aqueous (OUTPUT)
     c=ws.cell(row=row,column=40)
     c.value="="+"+".join(f"{gcl(XCOL[e])}{row}" for e in ELEMS)
-    c.font=font(bold=True,col=O_FG,sz=9); c.fill=fill(O_BG)
+    c.font=font(bold=True,col=O_FG,sz=9); c.fill=fill(GREY_INACTIVE)
     c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
-# Conditional formatting — section tints on cols A:B
-cf = f"A{R0}:B{R1}"
-ws.conditional_formatting.add(cf, FormulaRule(
-    formula=[f"$A{R0}>{REF['n_ext']}+{REF['n_scr']}"],
-    fill=PatternFill("solid",fgColor=SEC_STR), stopIfTrue=False))
-ws.conditional_formatting.add(cf, FormulaRule(
-    formula=[f"$A{R0}>{REF['n_ext']}"],
-    fill=PatternFill("solid",fgColor=SEC_SCR), stopIfTrue=False))
-ws.conditional_formatting.add(cf, FormulaRule(
-    formula=[f"$A{R0}<={REF['n_ext']}"],
-    fill=PatternFill("solid",fgColor=SEC_EXT), stopIfTrue=False))
+# ── Conditional formatting — SOLVER section tints ─────────────────────────────
+# Rules applied highest-priority first: inactive → strip → scrub → extraction
+cf_solver = f"A{R0}:{gcl(40)}{R1}"
+
+# 1. Inactive stages → grey (stopIfTrue so section rules don't override)
+ws.conditional_formatting.add(cf_solver, FormulaRule(
+    formula=[f"$A{R0}>{NT}"],
+    fill=PatternFill("solid", fgColor=GREY_INACTIVE), stopIfTrue=True))
+
+# 2-4. Active section tints on cols A:B only (section label columns)
+cf_ab = f"A{R0}:B{R1}"
+ws.conditional_formatting.add(cf_ab, FormulaRule(
+    formula=[f"AND($A{R0}<={NT},$A{R0}>{REF['n_ext']}+{REF['n_scr']})"],
+    fill=PatternFill("solid", fgColor=SEC_STR), stopIfTrue=True))
+ws.conditional_formatting.add(cf_ab, FormulaRule(
+    formula=[f"AND($A{R0}<={NT},$A{R0}>{REF['n_ext']})"],
+    fill=PatternFill("solid", fgColor=SEC_SCR), stopIfTrue=True))
+ws.conditional_formatting.add(cf_ab, FormulaRule(
+    formula=[f"AND($A{R0}<={NT},$A{R0}<={REF['n_ext']})"],
+    fill=PatternFill("solid", fgColor=SEC_EXT), stopIfTrue=True))
 
 # ═════════════════════════════════════════════════════════════════════════════
 # STAGE PROFILE TABLE (for charts)
@@ -494,34 +522,61 @@ for col,lbl in enumerate(["Stage","Section","x_Pr","x_Nd","x_Tb","x_Dy",
     hdr_col(ws, PROF_HDR+1, col, lbl, bg=T_COLHDR, sz=9, wrap=True)
 ws.row_dimensions[PROF_HDR+1].height = 28
 
-def sec_label(n):
-    if n<=10: return "Extraction", SEC_EXT
-    elif n<=20: return "Scrub",    SEC_SCR
-    else: return "Strip",          SEC_STR
-
-for n in range(1,N+1):
+for n in range(1, N+1):
     pr = PROF_R0 + n - 1
     sr = R0      + n - 1
-    sec, sbg = sec_label(n)
 
+    # Stage number (always shown)
     c=ws.cell(row=pr,column=1); c.value=n
-    c.font=font(col=T_TITLE,sz=9); c.fill=fill(sbg); c.alignment=aln(); c.border=brd()
-    c=ws.cell(row=pr,column=2); c.value=sec
-    c.font=font(col=T_TITLE,sz=9); c.fill=fill(sbg); c.alignment=aln(); c.border=brd()
+    c.font=font(col="888888",sz=9); c.fill=fill(GREY_INACTIVE)
+    c.alignment=aln(); c.border=brd()
 
+    # Section label — dynamic, blank if inactive
+    c=ws.cell(row=pr,column=2)
+    c.value=(f'=IF({n}>{NT},"—",'
+             f'IF({n}<={REF["n_ext"]},"Extraction",'
+             f'IF({n}<={REF["n_ext"]}+{REF["n_scr"]},"Scrub","Strip")))')
+    c.font=font(col="888888",sz=9); c.fill=fill(GREY_INACTIVE)
+    c.alignment=aln(); c.border=brd()
+
+    # Aqueous concentrations — blank if inactive (so chart shows gap)
     for j,e in enumerate(ELEMS,start=3):
         c=ws.cell(row=pr,column=j)
-        style_ref(c, frm=f"=${gcl(XCOL[e])}${sr}", nf="0.0000")
+        c.value=f'=IF({n}>{NT},"",{gcl(XCOL[e])}{sr})'
+        c.font=font(col=R_FG,sz=9); c.fill=fill(GREY_INACTIVE)
+        c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
-    # x_NdPr
+    # x_NdPr (blank if inactive)
     c=ws.cell(row=pr,column=7)
-    style_ref(c, frm=f"=C{pr}+D{pr}", nf="0.0000")
+    c.value=f'=IF({n}>{NT},"",C{pr}+D{pr})'
+    c.font=font(col=R_FG,sz=9); c.fill=fill(GREY_INACTIVE)
+    c.alignment=aln(); c.border=brd(); c.number_format="0.0000"
 
+    # % columns (blank if inactive)
     tot=f"(C{pr}+D{pr}+E{pr}+F{pr})"
     c=ws.cell(row=pr,column=8)
-    style_output(c, frm=f"=IF({tot}=0,0,(C{pr}+D{pr})/{tot}*100)", nf="0.00", sz=9)
+    c.value=f'=IF({n}>{NT},"",IF({tot}=0,0,(C{pr}+D{pr})/{tot}*100))'
+    c.font=font(bold=True,col=O_FG,sz=9); c.fill=fill(GREY_INACTIVE)
+    c.alignment=aln(); c.border=brd(); c.number_format="0.00"
     c=ws.cell(row=pr,column=9)
-    style_output(c, frm=f"=IF({tot}=0,0,F{pr}/{tot}*100)", nf="0.00", sz=9)
+    c.value=f'=IF({n}>{NT},"",IF({tot}=0,0,F{pr}/{tot}*100))'
+    c.font=font(bold=True,col=O_FG,sz=9); c.fill=fill(GREY_INACTIVE)
+    c.alignment=aln(); c.border=brd(); c.number_format="0.00"
+
+# Conditional formatting — profile table section tints + inactive grey
+cf_prof_ab = f"A{PROF_R0}:B{PROF_R1}"
+ws.conditional_formatting.add(f"A{PROF_R0}:{gcl(9)}{PROF_R1}", FormulaRule(
+    formula=[f"$A{PROF_R0}>{NT}"],
+    fill=PatternFill("solid", fgColor=GREY_INACTIVE), stopIfTrue=True))
+ws.conditional_formatting.add(cf_prof_ab, FormulaRule(
+    formula=[f"AND($A{PROF_R0}<={NT},$A{PROF_R0}>{REF['n_ext']}+{REF['n_scr']})"],
+    fill=PatternFill("solid", fgColor=SEC_STR), stopIfTrue=True))
+ws.conditional_formatting.add(cf_prof_ab, FormulaRule(
+    formula=[f"AND($A{PROF_R0}<={NT},$A{PROF_R0}>{REF['n_ext']})"],
+    fill=PatternFill("solid", fgColor=SEC_SCR), stopIfTrue=True))
+ws.conditional_formatting.add(cf_prof_ab, FormulaRule(
+    formula=[f"AND($A{PROF_R0}<={NT},$A{PROF_R0}<={REF['n_ext']})"],
+    fill=PatternFill("solid", fgColor=SEC_EXT), stopIfTrue=True))
 
 # ═════════════════════════════════════════════════════════════════════════════
 # CHARTS
@@ -540,6 +595,7 @@ def make_chart(title, y_title, col1, col2, y_min=None, y_max=None, pct_fmt=False
     ch.y_axis.numFmt   = '0"%"' if pct_fmt else "0.00"
     ch.x_axis.tickLblPos = "low"
     ch.legend.position = "tr"
+    ch.dispBlanksAs    = "gap"   # inactive stages (blank cells) show as gaps
     if y_min is not None: ch.y_axis.scaling.min = y_min
     if y_max is not None: ch.y_axis.scaling.max = y_max
 
